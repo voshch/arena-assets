@@ -76,29 +76,63 @@ class Bucket:
             url = self._object_url("", **params, pageToken=next_token) if next_token else None
         return assets
 
-    def listdirs(self, prefixes: list[str]) -> dict[str, list[dict]]:
-        """List objects under multiple prefixes concurrently."""
-        with ThreadPoolExecutor(max_workers=20) as pool:
-            futures = {pool.submit(self.listdir, p): p for p in prefixes}
-            return {futures[f]: f.result() for f in futures}
+    def listchildren(self, prefix: str) -> list[str]:
+        """Immediate child prefixes under *prefix*, one API call per page.
 
-    def asset_exists(self, asset: str) -> bool:
-        """Check if an asset exists in the bucket."""
-        if os.path.basename(asset) != ANNOTATION_NAME:
-            asset = os.path.join(asset, ANNOTATION_NAME)
-        url = self._object_url(asset, fields="name")
+        Buckets that carry no annotation sentinel (worlds, benchmark configs) are
+        enumerated by directory rather than by scanning every object.
+        """
+        results: list[str] = []
+        prefix = prefix.strip("/")
+        if prefix:
+            prefix += "/"
+
+        params = {"prefix": prefix, "delimiter": "/"}
+        url = self._object_url("", **params)
+
+        while url:
+            resp = urllib.request.urlopen(self._request(url))
+            data = json.loads(resp.read())
+            results.extend(p.rstrip("/") for p in data.get("prefixes", []))
+
+            next_token = data.get("nextPageToken")
+            url = self._object_url("", **params, pageToken=next_token) if next_token else None
+
+        return results
+
+    def object_exists(self, name: str) -> bool:
+        """Existence of an exact object, with no sentinel assumptions."""
         try:
-            urllib.request.urlopen(self._request(url, method="HEAD"))
+            urllib.request.urlopen(self._request(self._object_url(name, fields="name"), method="HEAD"))
             return True
         except urllib.error.HTTPError as e:
             if e.code == 404:
                 return False
             raise
 
-    def assets_exist(self, assets: list[str]) -> list[tuple[str, bool]]:
+    def listdirs(self, prefixes: list[str]) -> dict[str, list[dict]]:
+        """List objects under multiple prefixes concurrently."""
+        with ThreadPoolExecutor(max_workers=20) as pool:
+            futures = {pool.submit(self.listdir, p): p for p in prefixes}
+            return {futures[f]: f.result() for f in futures}
+
+    def asset_exists(self, asset: str, sentinel: str | None = ANNOTATION_NAME) -> bool:
+        """Check if an asset exists in the bucket.
+
+        With *sentinel* the check is for ``<asset>/<sentinel>``, which is how annotated
+        model assets are marked. Pass ``sentinel=None`` for payloads that carry no
+        sentinel (worlds, benchmark configs), where any object under the prefix counts.
+        """
+        if sentinel is None:
+            return self.object_exists(asset) or bool(self.listdir(asset))
+        if os.path.basename(asset) != sentinel:
+            asset = os.path.join(asset, sentinel)
+        return self.object_exists(asset)
+
+    def assets_exist(self, assets: list[str], sentinel: str | None = ANNOTATION_NAME) -> list[tuple[str, bool]]:
         """Check if multiple assets exist concurrently."""
         with ThreadPoolExecutor(max_workers=20) as pool:
-            futures = [(a, pool.submit(self.asset_exists, a)) for a in assets]
+            futures = [(a, pool.submit(self.asset_exists, a, sentinel)) for a in assets]
             return [(a, f.result()) for a, f in futures]
 
     def download(self, blob_name: str, local_path: str) -> int:

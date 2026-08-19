@@ -1,5 +1,3 @@
-import os
-
 import typer
 
 from arena_models.cli.utils import safe_echo
@@ -14,21 +12,13 @@ def list_command(
 
     safe_echo(f"Listing assets in bucket: {source} under prefix: {prefix or '(root)'}", ctx)
 
-    from arena_models.impl import ANNOTATION_NAME
     from arena_models.impl.fetch import Bucket
 
-    b = Bucket(source)
-    blobs = b.listdir(prefix)
-    seen = set()
-    for blob in blobs:
-        name = blob["name"]
-        if os.path.basename(name) == ANNOTATION_NAME:
-            asset_dir = os.path.dirname(name)
-            if asset_dir not in seen:
-                seen.add(asset_dir)
-                print(asset_dir)
+    assets = Bucket(source).list_assets(prefix)
+    for asset_dir in assets:
+        print(asset_dir)
 
-    safe_echo(f"Found {len(seen)} asset(s).", ctx)
+    safe_echo(f"Found {len(assets)} asset(s).", ctx)
 
 
 def add_to_cmd(cmd: typer.Typer):

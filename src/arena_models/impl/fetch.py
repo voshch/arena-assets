@@ -56,6 +56,26 @@ class Bucket:
 
         return results
 
+    def list_assets(self, prefix: str = "") -> list[str]:
+        """List asset directories under a prefix: one server-side glob on the annotation file, names only."""
+        prefix = prefix.strip("/")
+        if prefix:
+            prefix += "/"
+        params = {
+            "prefix": prefix,
+            "matchGlob": f"**/{ANNOTATION_NAME}",
+            "fields": "items(name),nextPageToken",
+            "maxResults": "5000",
+        }
+        assets = []
+        url = self._object_url("", **params)
+        while url:
+            data = json.loads(urllib.request.urlopen(self._request(url)).read())
+            assets.extend(os.path.dirname(item["name"]) for item in data.get("items", []))
+            next_token = data.get("nextPageToken")
+            url = self._object_url("", **params, pageToken=next_token) if next_token else None
+        return assets
+
     def listdirs(self, prefixes: list[str]) -> dict[str, list[dict]]:
         """List objects under multiple prefixes concurrently."""
         with ThreadPoolExecutor(max_workers=20) as pool:

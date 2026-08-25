@@ -56,6 +56,15 @@ class Bucket:
 
         return results
 
+    def prefix_exists(self, prefix: str) -> bool:
+        """Whether any object lives under *prefix*."""
+        prefix = prefix.strip("/")
+        if prefix:
+            prefix += "/"
+        url = self._object_url("", prefix=prefix, maxResults="1", fields="items(name)")
+        resp = urllib.request.urlopen(self._request(url))
+        return bool(json.loads(resp.read()).get("items"))
+
     def list_assets(self, prefix: str = "") -> list[str]:
         """List asset directories under a prefix: one server-side glob on the annotation file, names only."""
         prefix = prefix.strip("/")
@@ -124,7 +133,7 @@ class Bucket:
         sentinel (worlds, benchmark configs), where any object under the prefix counts.
         """
         if sentinel is None:
-            return self.object_exists(asset) or bool(self.listdir(asset))
+            return self.prefix_exists(asset) or self.object_exists(asset)
         if os.path.basename(asset) != sentinel:
             asset = os.path.join(asset, sentinel)
         return self.object_exists(asset)

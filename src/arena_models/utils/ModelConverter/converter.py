@@ -164,6 +164,53 @@ class ModelConverter:
             )
         )
 
+    def bind_uv_maps(self) -> None:
+        """Bind each material's image textures to the UV layer holding its UVs."""
+        for obj in bpy.context.scene.objects:
+            if obj.type != "MESH" or not obj.data.uv_layers:
+                continue
+            mesh = obj.data
+            for slot, material in enumerate(mesh.materials):
+                if material is None or not material.use_nodes:
+                    continue
+                loops = [li for p in mesh.polygons if p.material_index == slot for li in p.loop_indices]
+                if not loops:
+                    continue
+
+                best, best_span = None, 0.0
+                for uv in mesh.uv_layers:
+                    xs = [uv.data[li].uv.x for li in loops]
+                    ys = [uv.data[li].uv.y for li in loops]
+                    span = (max(xs) - min(xs)) + (max(ys) - min(ys))
+                    if span > best_span:
+                        best, best_span = uv.name, span
+                if best is None:
+                    continue
+
+                tree = material.node_tree
+                uv_node = tree.nodes.new("ShaderNodeUVMap")
+                uv_node.uv_map = best
+                for node in tree.nodes:
+                    if node.type == "TEX_IMAGE" and not node.inputs["Vector"].is_linked:
+                        tree.links.new(uv_node.outputs["UV"], node.inputs["Vector"])
+
+    @contextlib.contextmanager
+    def ambient_context(self, strength: float):
+        """White world lighting, kept out of the image by film_transparent."""
+        scene = bpy.context.scene
+        prev_world = scene.world
+        world = bpy.data.worlds.new("RenderWorld")
+        try:
+            world.use_nodes = True
+            background = world.node_tree.nodes["Background"]
+            background.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+            background.inputs["Strength"].default_value = strength
+            scene.world = world
+            yield
+        finally:
+            scene.world = prev_world
+            bpy.data.worlds.remove(world, do_unlink=True)
+
     @contextlib.contextmanager
     def camera_lighting_context(self):
         """Context manager that creates and manages a camera with sunlight.
@@ -274,6 +321,7 @@ class ModelConverter:
         resolution: tuple[int, int] | None = None,
         theta: float = 0,
         elevation: float = math.pi / 4,
+        ambient: float = 0.0,
     ) -> None:
         """Render the current scene to a perspective image, viewing the face at azimuth theta."""
         scene = bpy.context.scene
@@ -318,7 +366,8 @@ class ModelConverter:
             fill_object.location = camera_object.location + mathutils.Vector((0.0, 0.0, -1.0))
             fill_object.rotation_euler = (center - fill_object.location).to_track_quat("-Z", "Y").to_euler()
 
-            self._render(output_path)
+            with self.ambient_context(ambient) if ambient > 0 else contextlib.nullcontext():
+                self._render(output_path)
 
     def render_topdown(self, output_path: str, *, resolution: tuple[int, int] | None = None) -> None:
         """Render an orthographic top-down preview that snugly fits the XY bounds.

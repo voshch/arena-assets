@@ -55,3 +55,7 @@ def test_human_annotation_adds_no_new_fields():
         "face",
         "note",
     }
+
+
+def test_human_builder_registers_previews():
+    assert "previews" in DatabaseBuilder.get_all_options()[AssetType.HUMAN]

@@ -1,4 +1,4 @@
-from arena_models.impl.fetch import Bucket
+from arena_assets.impl.fetch import Bucket
 
 API = "https://storage.googleapis.com/storage/v1/b/bkt/o"
 

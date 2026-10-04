@@ -1,5 +1,5 @@
-from arena_models.impl import DATABASE_NAME, Annotation
-from arena_models.utils.Database import Database
+from arena_assets.impl import DATABASE_NAME, Annotation
+from arena_assets.utils.Database import Database
 
 
 def test_store_upserts_by_path(tmp_path):

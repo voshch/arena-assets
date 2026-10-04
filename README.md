@@ -1,8 +1,8 @@
-# arena-models
+# arena-assets
 
 Build, query, and manage 3D model databases for [Arena](https://github.com/Arena-Rosnav).
 
-`arena-models` converts datasets of 3D assets (objects and materials) into a searchable database: models are converted with Blender, optionally baked with Isaac Sim, and indexed in [ChromaDB](https://www.trychroma.com/) so they can be queried by natural-language description.
+`arena-assets` converts datasets of 3D assets (objects and materials) into a searchable database: models are converted with Blender, optionally baked with Isaac Sim, and indexed in [ChromaDB](https://www.trychroma.com/) so they can be queried by natural-language description.
 
 ## Installation
 
@@ -10,7 +10,7 @@ Build, query, and manage 3D model databases for [Arena](https://github.com/Arena
 pip install ./src
 ```
 
-Note: if you want to install `arena_models[build]`, you must use Python 3.11.* (bpy dependency).
+Note: if you want to install `arena_assets[build]`, you must use Python 3.11.* (bpy dependency).
 
 The repository is also an `ament_cmake` ROS package; building it in a colcon workspace installs the CLI into a dedicated venv.
 
@@ -20,13 +20,13 @@ The repository is also an `ament_cmake` ROS package; building it in a colcon wor
 
 ```sh
 # list available assets
-arena-models net default list
+arena-assets net default list
 
 # download assets into a local directory
-arena-models net default fetch -o ./models Common/Material/ABS_Hard_Leather
+arena-assets net default fetch -o ./models Common/Material/ABS_Hard_Leather
 
 # only download specific model formats, skip annotations
-arena-models net default fetch -o ./models --format usdz --no-annotation
+arena-assets net default fetch -o ./models --format usdz --no-annotation
 ```
 
 `default` resolves to the public GCS bucket; any other bucket name can be passed instead.
@@ -34,7 +34,7 @@ arena-models net default fetch -o ./models --format usdz --no-annotation
 ### Build a database
 
 ```sh
-arena-models db ./models build -i ./dataset
+arena-assets db ./models build -i ./dataset
 ```
 
 Build options are passed with `-o key=value`:
@@ -51,7 +51,7 @@ Build options are passed with `-o key=value`:
 ### Upload a built database
 
 ```sh
-arena-models net my-bucket author ./models -d Common
+arena-assets net my-bucket author ./models -d Common
 ```
 
 Files already present in the bucket with the same size are skipped. Uploading requires write access to the bucket: a token is taken from `--token`, the `GCS_ACCESS_TOKEN` environment variable, or `gcloud auth print-access-token`, in that order.
@@ -60,16 +60,16 @@ Files already present in the bucket with the same size are skipped. Uploading re
 
 ```sh
 # best match (prints the asset path)
-arena-models db ./models query material "light brown wood"
+arena-assets db ./models query material "light brown wood"
 
 # top 5 matches with distance scores
-arena-models db ./models query object "office chair" -n 5 --scores
+arena-assets db ./models query object "office chair" -n 5 --scores
 
 # constrain by size (width/depth/height/volume in meters, repeatable)
-arena-models db ./models query object "office chair" --filter "height<1.0" --filter "volume>0.05"
+arena-assets db ./models query object "office chair" --filter "height<1.0" --filter "volume>0.05"
 
 # list everything of a type
-arena-models db ./models list material
+arena-assets db ./models list material
 ```
 
 All logs and progress bars go to stderr; stdout only carries the results, so output can be piped.

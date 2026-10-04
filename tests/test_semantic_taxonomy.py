@@ -1,5 +1,5 @@
-from arena_models.semantic import metadata_columns, parse_tag, parse_tags, words
-from arena_models.semantic.taxonomy import class_from_dirname, is_grammatical, load_spec
+from arena_assets.semantic import metadata_columns, parse_tag, parse_tags, words
+from arena_assets.semantic.taxonomy import class_from_dirname, is_grammatical, load_spec
 
 
 def test_parse_tag_splits_key_and_value():

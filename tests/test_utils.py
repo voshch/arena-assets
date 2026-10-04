@@ -1,5 +1,5 @@
-from arena_models.impl import convert_list_str
-from arena_models.utils.logging import format_file_size
+from arena_assets.impl import convert_list_str
+from arena_assets.utils.logging import format_file_size
 
 
 def test_format_file_size():

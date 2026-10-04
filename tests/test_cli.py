@@ -1,7 +1,7 @@
 from typer.testing import CliRunner
 
-from arena_models.__main__ import app
-from arena_models.cli.db.query import parse_filters
+from arena_assets.__main__ import app
+from arena_assets.cli.db.query import parse_filters
 
 runner = CliRunner()
 
@@ -17,7 +17,7 @@ def test_parse_filters():
 def test_version():
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0
-    assert result.output.startswith("Arena Models v")
+    assert result.output.startswith("Arena Assets v")
 
 
 def test_invalid_log_level():

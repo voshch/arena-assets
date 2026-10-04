@@ -1,4 +1,4 @@
-from arena_models.utils.geom import BoundingBox
+from arena_assets.utils.geom import BoundingBox
 
 
 def test_accessors_and_volume():

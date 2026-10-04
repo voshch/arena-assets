@@ -1,4 +1,4 @@
-from arena_models.impl import Annotation
+from arena_assets.impl import Annotation
 
 
 def test_metadata_roundtrip():

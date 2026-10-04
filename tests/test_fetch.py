@@ -2,9 +2,9 @@ import os
 
 import pytest
 
-from arena_models.impl import fetch
-from arena_models.impl.fetch import fetch_database
-from arena_models.utils.logging import initialize
+from arena_assets.impl import fetch
+from arena_assets.impl.fetch import fetch_database
+from arena_assets.utils.logging import initialize
 
 
 @pytest.fixture

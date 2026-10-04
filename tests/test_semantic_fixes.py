@@ -1,7 +1,7 @@
 import yaml
 
-from arena_models.semantic.fixes import fix_file
-from arena_models.semantic.taxonomy import load_spec
+from arena_assets.semantic.fixes import fix_file
+from arena_assets.semantic.taxonomy import load_spec
 
 SPEC = load_spec()
 

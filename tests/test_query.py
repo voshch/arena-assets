@@ -2,8 +2,8 @@ import math
 
 import pytest
 
-from arena_models.impl import Annotation, AssetType
-from arena_models.impl.query import _lexical_rank, query_database
+from arena_assets.impl import Annotation, AssetType
+from arena_assets.impl.query import _lexical_rank, query_database
 
 
 def test_top_n_ranked(database_path):

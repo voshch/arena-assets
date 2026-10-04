@@ -2,9 +2,9 @@ import math
 
 import pytest
 
-from arena_models.impl import Face, converter
-from arena_models.impl.build.ObjectDatabaseBuilder import ObjectAnnotation
-from arena_models.utils.geom import BoundingBox
+from arena_assets.impl import Face, converter
+from arena_assets.impl.build.ObjectDatabaseBuilder import ObjectAnnotation
+from arena_assets.utils.geom import BoundingBox
 
 
 def make_annotation():

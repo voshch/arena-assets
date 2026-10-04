@@ -1,7 +1,7 @@
 import yaml
 
-from arena_models.semantic.lint import lint_file, lint_tree
-from arena_models.semantic.taxonomy import load_spec
+from arena_assets.semantic.lint import lint_file, lint_tree
+from arena_assets.semantic.taxonomy import load_spec
 
 SPEC = load_spec()
 

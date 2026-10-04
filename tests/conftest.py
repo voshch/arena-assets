@@ -1,9 +1,9 @@
 import pytest
 
-from arena_models.impl import DATABASE_NAME, Annotation
-from arena_models.impl.build.ObjectDatabaseBuilder import ObjectAnnotation
-from arena_models.utils.Database import Database
-from arena_models.utils.geom import BoundingBox
+from arena_assets.impl import DATABASE_NAME, Annotation
+from arena_assets.impl.build.ObjectDatabaseBuilder import ObjectAnnotation
+from arena_assets.utils.Database import Database
+from arena_assets.utils.geom import BoundingBox
 
 MATERIALS = [
     Annotation(

@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "arena_models"
+name = "arena_assets"
 version = "0.1.0"
 description = "TODO"
 authors = [
@@ -21,7 +21,7 @@ dependencies = [
     "typer~=0.19.1",
     "enlighten~=1.14.1",
 ]
-# requires-python = "==3.11.*" # only required for arena_models[build]
+# requires-python = "==3.11.*" # only required for arena_assets[build]
 
 
 [project.optional-dependencies]
@@ -33,21 +33,21 @@ test = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/arena-models/arena-models"
-Repository = "https://github.com/arena-models/arena-models"
+Homepage = "https://github.com/voshch/arena-assets"
+Repository = "https://github.com/voshch/arena-assets"
 
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["arena_models*"]
+include = ["arena_assets*"]
 
 [tool.setuptools.package-data]
-arena_models = ["semantic/asa.yaml"]
+arena_assets = ["semantic/asa.yaml"]
 
 [tool.ruff]
 target-version = "py311"
 line-length = 320
-src = ["arena_models"]
+src = ["arena_assets"]
 extend-exclude = [
     "build",
     "*.egg-info",
@@ -58,8 +58,8 @@ select = ["E", "F", "W", "I", "UP", "B", "ANN", "PYI"]
 ignore = ["E501", "E402", "F841", "E731", "PYI051", "E741", "UP035"]
 
 [tool.ruff.lint.per-file-ignores]
-"arena_models/cli/**/*.py" = ["B008"]
-"arena_models/__main__.py" = ["B008"]
+"arena_assets/cli/**/*.py" = ["B008"]
+"arena_assets/__main__.py" = ["B008"]
 
 [tool.ruff.lint.flake8-annotations]
 suppress-none-returning = true

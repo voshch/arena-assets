@@ -1,10 +1,10 @@
-from arena_models.impl import AssetType, Face, converter
-from arena_models.impl.build import DatabaseBuilder
-from arena_models.impl.build.HumanDatabaseBuilder import (
+from arena_assets.impl import AssetType, Face, converter
+from arena_assets.impl.build import DatabaseBuilder
+from arena_assets.impl.build.HumanDatabaseBuilder import (
     HumanAnnotation,
     HumanDatabaseBuilder,
 )
-from arena_models.utils.geom import BoundingBox
+from arena_assets.utils.geom import BoundingBox
 
 
 def test_builder_factory_resolves_human():

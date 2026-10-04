@@ -14,6 +14,11 @@ def test_parse_filters():
     }
 
 
+def test_parse_filters_equality_on_strings_and_booleans():
+    assert parse_filters(["kind=alarm"]) == {"kind": {"$eq": "alarm"}}
+    assert parse_filters(["loop=true", "kind = motor"]) == {"$and": [{"loop": {"$eq": True}}, {"kind": {"$eq": "motor"}}]}
+
+
 def test_version():
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0

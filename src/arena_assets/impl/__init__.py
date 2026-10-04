@@ -63,6 +63,7 @@ class AssetType(enum.Enum):
     OBJECT = "object"
     MATERIAL = "material"
     HUMAN = "human"
+    SOUND = "sound"
 
 
 DATABASE_NAME = ".db"

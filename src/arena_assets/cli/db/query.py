@@ -9,16 +9,22 @@ from ...impl import AssetType
 from ..utils import safe_echo
 
 _FILTER_OPS = {"<=": "$lte", ">=": "$gte", "<": "$lt", ">": "$gt", "=": "$eq"}
+_BOOLEANS = {"true": True, "false": False}
 
 
 def parse_filters(filters: list[str]) -> dict | None:
     clauses = []
     for expression in filters:
         match = re.fullmatch(r"\s*(\w+)\s*(<=|>=|<|>|=)\s*(-?\d+(?:\.\d+)?)\s*", expression)
+        if match is not None:
+            field, op, value = match.groups()
+            clauses.append({field: {_FILTER_OPS[op]: float(value)}})
+            continue
+        match = re.fullmatch(r"\s*(\w+)\s*=\s*(\S.*?)\s*", expression)
         if match is None:
-            raise typer.BadParameter(f"Invalid filter '{expression}', expected e.g. 'height<0.75'")
-        field, op, value = match.groups()
-        clauses.append({field: {_FILTER_OPS[op]: float(value)}})
+            raise typer.BadParameter(f"Invalid filter '{expression}', expected e.g. 'height<0.75' or 'kind=alarm'")
+        field, value = match.groups()
+        clauses.append({field: {"$eq": _BOOLEANS.get(value.lower(), value)}})
     if not clauses:
         return None
     if len(clauses) == 1:
@@ -35,7 +41,7 @@ def query_command(
     query_text: str = typer.Argument(..., help="Text description to search for"),
     count: int = typer.Option(1, "--count", "-n", min=1, help="Number of results to return"),
     scores: bool = typer.Option(False, "--scores", help="Append the distance score to each result"),
-    filters: list[str] = typer.Option([], "--filter", help="Numeric metadata filter like 'height<0.75'. Repeatable."),
+    filters: list[str] = typer.Option([], "--filter", help="Metadata filter, numeric like 'height<0.75' or equality like 'kind=alarm' or 'loop=true'. Repeatable."),
 ):
     """Search for models in the database using natural language."""
     database_path = ctx.obj.get("database_path") if ctx.obj else None

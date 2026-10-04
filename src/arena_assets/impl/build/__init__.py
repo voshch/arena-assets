@@ -327,3 +327,10 @@ def lazy_human(type_: AssetType) -> typing.Type[DatabaseBuilder]:
     from .HumanDatabaseBuilder import HumanDatabaseBuilder
 
     return HumanDatabaseBuilder
+
+
+@DatabaseBuilder.register(AssetType.SOUND)
+def lazy_sound(type_: AssetType) -> typing.Type[DatabaseBuilder]:
+    from .SoundDatabaseBuilder import SoundDatabaseBuilder
+
+    return SoundDatabaseBuilder

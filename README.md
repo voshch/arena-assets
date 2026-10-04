@@ -2,7 +2,7 @@
 
 Build, query, and manage 3D model databases for [Arena](https://github.com/Arena-Rosnav).
 
-`arena-assets` converts datasets of 3D assets (objects and materials) into a searchable database: models are converted with Blender, optionally baked with Isaac Sim, and indexed in [ChromaDB](https://www.trychroma.com/) so they can be queried by natural-language description.
+`arena-assets` converts datasets of assets (objects, materials, humans, and sounds) into a searchable database: models are converted with Blender, optionally baked with Isaac Sim, and indexed in [ChromaDB](https://www.trychroma.com/) so they can be queried by natural-language description.
 
 ## Installation
 
@@ -46,7 +46,21 @@ Build options are passed with `-o key=value`:
 | `procthor` | object, material | export a ProcTHOR-compatible `asset-database.json` |
 | `bake-mdl` | object | bake embedded MDL materials with Isaac Sim |
 
+Each type is discovered under its own directory of the dataset (`Object`, `Material`, `Human`, `Sound`).
+
 `--overwrite` controls re-building: `skip` (default) keeps existing entries, `overwrite` rebuilds them, `annotations` only refreshes annotations.
+
+### Sound assets
+
+A sound asset is a directory `Sound/<Name>/` holding its wav files and a `<Name>.yaml` manifest (version 2: `kind`, `level_db`, `loop`, `variants`, optional `desc` and `tags`). The manifest is the only annotation source: the build derives `annotation.yaml` from it (tags are the manifest tags, every variant's tags, and the kind) and fails on a manifest with the wrong version or without `kind`, `level_db` or `variants`.
+
+```sh
+arena-assets db ./sounds build -t sound -i ./dataset
+arena-assets db ./sounds query sound "robot motor hum" --filter "level_db>50"
+arena-assets db ./sounds query sound "steps on wood" --filter "kind=footstep" -n 3
+```
+
+`kind`, `loop`, `level_db`, and the comma-joined variant ids are stored as metadata.
 
 ### Upload a built database
 

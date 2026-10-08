@@ -17,7 +17,7 @@ from arena_assets.utils.logging import get_logger
 
 from ..CoordinateSystem import CoordinateSystem
 from ..io_utils import capture_all_output
-from . import ModelFormat
+from . import ModelFormat, sdf_model
 
 logger = get_logger("ModelConverter")
 
@@ -494,22 +494,7 @@ def sdf_export(filepath: str):
     bpy.ops.wm.collada_export(filepath=str(dae_path))
 
     sdf_path = base_path / f"{base_path.stem}.sdf"
-    with open(sdf_path, "w") as f:
-        f.write(f"""<?xml version="1.0" ?>
-<sdf version="1.7">
-  <model name="{base_path.stem}">
-    <static>true</static>
-    <link name="link">
-      <visual name="visual">
-        <geometry>
-          <mesh>
-            <uri>{base_path.stem}.dae</uri>
-          </mesh>
-        </geometry>
-      </visual>
-    </link>
-  </model>
-</sdf>""")
+    sdf_path.write_text(sdf_model(base_path.stem))
 
 
 ModelConverter.register(ModelFormat.SDF)(

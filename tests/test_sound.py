@@ -26,7 +26,9 @@ SOUNDS = {
         "model": "wav_loop",
         "desc": "loud fire alarm siren",
         "tags": ["siren", "emergency"],
-        "variants": [{"id": "alarm_loop_01", "file": "alarm_loop.wav", "tags": ["alarm"]}],
+        "variants": [
+            {"id": "alarm_loop_01", "file": "alarm_loop.wav", "tags": ["alarm"]}
+        ],
     },
     "footstep": {
         "version": 2,
@@ -39,8 +41,18 @@ SOUNDS = {
         "surface": "floor",
         "desc": "footsteps walking on a wooden floor",
         "variants": [
-            {"id": "footstep_oak_planks_01", "file": "footstep_oak_planks.wav", "match": {"floor": ["oak"]}, "tags": ["walk", "oak_planks"]},
-            {"id": "footstep_default_01", "file": "footstep_default.wav", "default": True, "tags": ["walk", "default"]},
+            {
+                "id": "footstep_oak_planks_01",
+                "file": "footstep_oak_planks.wav",
+                "match": {"floor": ["oak"]},
+                "tags": ["walk", "oak_planks"],
+            },
+            {
+                "id": "footstep_default_01",
+                "file": "footstep_default.wav",
+                "default": True,
+                "tags": ["walk", "default"],
+            },
         ],
     },
 }
@@ -71,7 +83,9 @@ def sound_db(tmp_path_factory):
     output_path = tmp_path_factory.mktemp("sound_output")
     for name, manifest in SOUNDS.items():
         _write_sound(input_path, name, manifest)
-    DatabaseBuilder.Builder(AssetType.SOUND)(input_path=input_path, output_path=output_path).build()
+    DatabaseBuilder.Builder(AssetType.SOUND)(
+        input_path=input_path, output_path=output_path
+    ).build()
     return output_path
 
 
@@ -83,12 +97,16 @@ def test_builder_factory_resolves_sound():
 
 
 def test_sound_build_indexes_every_manifest_dir(sound_db):
-    paths = sorted(annotation.path for annotation in list_database(str(sound_db), AssetType.SOUND))
+    paths = sorted(
+        annotation.path for annotation in list_database(str(sound_db), AssetType.SOUND)
+    )
     assert paths == ["Sound/alarm_loop", "Sound/footstep"]
 
 
 def test_sound_build_copies_manifest_and_wavs(sound_db):
-    assert sorted(path.name for path in (sound_db / "Sound" / "footstep").iterdir()) == [
+    assert sorted(
+        path.name for path in (sound_db / "Sound" / "footstep").iterdir()
+    ) == [
         ANNOTATION_NAME,
         "footstep.yaml",
         "footstep_default.wav",
@@ -110,9 +128,15 @@ def test_sound_build_writes_annotation_derived_from_manifest(sound_db):
 
 
 def test_sound_annotation_tags_union_variant_tags_and_kind(sound_db):
-    by_name = {annotation.name: annotation for annotation in list_database(str(sound_db), AssetType.SOUND)}
+    by_name = {
+        annotation.name: annotation
+        for annotation in list_database(str(sound_db), AssetType.SOUND)
+    }
     assert by_name["footstep"].tags == ["walk", "oak_planks", "default", "footstep"]
-    assert by_name["footstep"].variants == ["footstep_oak_planks_01", "footstep_default_01"]
+    assert by_name["footstep"].variants == [
+        "footstep_oak_planks_01",
+        "footstep_default_01",
+    ]
 
 
 def test_sound_query_by_text_ranks_matching_sound_first(sound_db):
@@ -121,12 +145,20 @@ def test_sound_query_by_text_ranks_matching_sound_first(sound_db):
 
 
 def test_sound_query_where_kind_filters(sound_db):
-    results = query_database(str(sound_db), AssetType.SOUND, "emergency siren", n=2, where={"kind": "footstep"})
+    results = query_database(
+        str(sound_db),
+        AssetType.SOUND,
+        "emergency siren",
+        n=2,
+        where={"kind": "footstep"},
+    )
     assert [annotation.path for annotation, _ in results] == ["Sound/footstep"]
 
 
 def test_sound_query_where_loop_filters(sound_db):
-    results = query_database(str(sound_db), AssetType.SOUND, "walking", n=2, where={"loop": True})
+    results = query_database(
+        str(sound_db), AssetType.SOUND, "walking", n=2, where={"loop": True}
+    )
     assert [annotation.path for annotation, _ in results] == ["Sound/alarm_loop"]
 
 
@@ -147,7 +179,10 @@ def test_sound_annotation_metadata_roundtrip():
 def test_cli_db_list_sound(sound_db):
     result = CliRunner().invoke(app, ["-s", "db", str(sound_db), "list", "sound"])
     assert result.exit_code == 0
-    assert sorted(result.output.split()) == [str(sound_db / "Sound/alarm_loop"), str(sound_db / "Sound/footstep")]
+    assert sorted(result.output.split()) == [
+        str(sound_db / "Sound/alarm_loop"),
+        str(sound_db / "Sound/footstep"),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -156,12 +191,19 @@ def test_cli_db_list_sound(sound_db):
         ({"version": 1}, "version must be 2"),
         ({"kind": None}, "'kind' must be a non-empty string"),
         ({"variants": None}, "'variants' must be a non-empty list"),
-        ({"variants": [{"file": "x.wav"}]}, "every variant must be a mapping with an id"),
+        (
+            {"variants": [{"file": "x.wav"}]},
+            "every variant must be a mapping with an id",
+        ),
         ({"tags": "siren"}, "tags must be a list of strings"),
     ],
 )
 def test_malformed_manifest_raises(tmp_path, change, message):
-    manifest = {key: value for key, value in {**SOUNDS["alarm_loop"], **change}.items() if value is not None}
+    manifest = {
+        key: value
+        for key, value in {**SOUNDS["alarm_loop"], **change}.items()
+        if value is not None
+    }
     directory = _write_sound(tmp_path, "broken", manifest)
     with pytest.raises(ValueError, match=message):
         SoundAnnotation.from_manifest(directory)
@@ -169,6 +211,8 @@ def test_malformed_manifest_raises(tmp_path, change, message):
 
 def test_sound_build_fails_on_malformed_manifest(tmp_path):
     _write_sound(tmp_path / "input", "broken", {**SOUNDS["alarm_loop"], "version": 3})
-    builder = DatabaseBuilder.Builder(AssetType.SOUND)(input_path=tmp_path / "input", output_path=tmp_path / "output")
+    builder = DatabaseBuilder.Builder(AssetType.SOUND)(
+        input_path=tmp_path / "input", output_path=tmp_path / "output"
+    )
     with pytest.raises(ValueError, match="broken.yaml: manifest version must be 2"):
         builder.build()

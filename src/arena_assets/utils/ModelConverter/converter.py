@@ -84,9 +84,9 @@ class ModelConverter:
         x, y, z = self._coordinates.get_transformation_to(coords)
         bpy.ops.object.select_all(action="SELECT")
         try:
-            bpy.ops.transform.rotate(value=x, orient_axis="X")
-            bpy.ops.transform.rotate(value=y, orient_axis="Y")
-            bpy.ops.transform.rotate(value=z, orient_axis="Z")
+            bpy.ops.transform.rotate(value=x, orient_axis="X", center_override=(0.0, 0.0, 0.0))
+            bpy.ops.transform.rotate(value=y, orient_axis="Y", center_override=(0.0, 0.0, 0.0))
+            bpy.ops.transform.rotate(value=z, orient_axis="Z", center_override=(0.0, 0.0, 0.0))
             self._coordinates = coords
         finally:
             bpy.ops.object.select_all(action="DESELECT")
@@ -425,7 +425,7 @@ class ModelConverter:
 
 ModelConverter.register(ModelFormat.USD, ModelFormat.USDA, ModelFormat.USDC, ModelFormat.USDZ)(
     _ModelConverterExt.inline(
-        CoordinateSystem("X+", "Y+", "Z+"),
+        CoordinateSystem.default(),
         bpy.ops.wm.usd_import,
         functools.partial(
             bpy.ops.wm.usd_export,
@@ -506,7 +506,14 @@ ModelConverter.register(ModelFormat.SDF)(
 )
 
 
-ModelConverter.register(ModelFormat.GLB, ModelFormat.GLTF)(_ModelConverterExt.inline(CoordinateSystem.default(), bpy.ops.import_scene.gltf, bpy.ops.export_scene.gltf))
+def gltf_export(filepath: str):
+    """Export glTF and clear typing's alias caches, which otherwise keep the exporter and bpy alive at exit."""
+    bpy.ops.export_scene.gltf(filepath=filepath)
+    for cleanup in typing._cleanups:
+        cleanup()
+
+
+ModelConverter.register(ModelFormat.GLB, ModelFormat.GLTF)(_ModelConverterExt.inline(CoordinateSystem.default(), bpy.ops.import_scene.gltf, gltf_export))
 
 
 __all__ = ["ModelConverter"]

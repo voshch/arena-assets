@@ -1,0 +1,8 @@
+target-version = "py311"
+line-length = 320
+
+[format]
+quote-style = "preserve"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "lf"

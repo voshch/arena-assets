@@ -12,17 +12,11 @@ def test_object_url_params():
 
 
 def test_object_url_encodes_object():
-    assert (
-        Bucket("bkt")._object_url("dir/file.yaml", fields="name")
-        == f"{API}/dir%2Ffile.yaml?fields=name"
-    )
+    assert Bucket("bkt")._object_url("dir/file.yaml", fields="name") == f"{API}/dir%2Ffile.yaml?fields=name"
 
 
 def test_upload_url_encodes_object():
-    assert (
-        Bucket("bkt")._upload_url("dir/file.yaml")
-        == "https://storage.googleapis.com/upload/storage/v1/b/bkt/o?uploadType=media&name=dir%2Ffile.yaml"
-    )
+    assert Bucket("bkt")._upload_url("dir/file.yaml") == "https://storage.googleapis.com/upload/storage/v1/b/bkt/o?uploadType=media&name=dir%2Ffile.yaml"
 
 
 def test_request_carries_token():

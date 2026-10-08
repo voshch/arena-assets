@@ -9,16 +9,12 @@ runner = CliRunner()
 def test_parse_filters():
     assert parse_filters([]) is None
     assert parse_filters(["height<0.75"]) == {"height": {"$lt": 0.75}}
-    assert parse_filters(["height<=1", "volume>0.1"]) == {
-        "$and": [{"height": {"$lte": 1.0}}, {"volume": {"$gt": 0.1}}]
-    }
+    assert parse_filters(["height<=1", "volume>0.1"]) == {"$and": [{"height": {"$lte": 1.0}}, {"volume": {"$gt": 0.1}}]}
 
 
 def test_parse_filters_equality_on_strings_and_booleans():
     assert parse_filters(["kind=alarm"]) == {"kind": {"$eq": "alarm"}}
-    assert parse_filters(["loop=true", "kind = motor"]) == {
-        "$and": [{"loop": {"$eq": True}}, {"kind": {"$eq": "motor"}}]
-    }
+    assert parse_filters(["loop=true", "kind = motor"]) == {"$and": [{"loop": {"$eq": True}}, {"kind": {"$eq": "motor"}}]}
 
 
 def test_version():
@@ -33,9 +29,7 @@ def test_invalid_log_level():
 
 
 def test_db_query_outputs_path(database_path):
-    result = runner.invoke(
-        app, ["-s", "db", str(database_path), "query", "material", "wooden floor"]
-    )
+    result = runner.invoke(app, ["-s", "db", str(database_path), "query", "material", "wooden floor"])
     assert result.exit_code == 0
     assert result.output.strip() == str(database_path / "materials/oak")
 

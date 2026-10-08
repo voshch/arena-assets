@@ -109,9 +109,7 @@ def test_missing_recommended_facet_is_info(tmp_path):
     missing = {f.message for f in findings2 if f.code == "missing-recommended-facet"}
     assert any("domain" in m for m in missing)
     assert any("kind" in m for m in missing)
-    assert all(
-        f.severity == "info" for f in findings2 if f.code == "missing-recommended-facet"
-    )
+    assert all(f.severity == "info" for f in findings2 if f.code == "missing-recommended-facet")
 
 
 def test_missing_asa_stamp_is_info(tmp_path):

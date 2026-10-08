@@ -13,9 +13,7 @@ MATERIALS = [
         tags=["wood"],
     ),
     Annotation(name="RedBrick", path="materials/brick", desc="red clay brick wall"),
-    Annotation(
-        name="SteelPlate", path="materials/steel", desc="brushed steel metal plate"
-    ),
+    Annotation(name="SteelPlate", path="materials/steel", desc="brushed steel metal plate"),
 ]
 
 OBJECTS = [

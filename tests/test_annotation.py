@@ -23,9 +23,7 @@ def test_name_text_keeps_meaningful_digits():
 
 
 def test_as_text_includes_name_and_fields():
-    annotation = Annotation(
-        name="OakWood_01", path="materials/oak", tags=["floor", "color::brown"]
-    )
+    annotation = Annotation(name="OakWood_01", path="materials/oak", tags=["floor", "color::brown"])
     text = annotation.as_text
     assert "Oak Wood" in text
     assert "brown" in text

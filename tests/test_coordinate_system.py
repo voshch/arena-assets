@@ -12,9 +12,7 @@ def test_identity_transformation():
 
 def test_y_up_to_blender():
     y_up = CoordinateSystem("X+", "Y+", "Z+")
-    assert y_up.get_transformation_to(CoordinateSystem.default()) == pytest.approx(
-        (math.pi / 2, 0.0, 0.0)
-    )
+    assert y_up.get_transformation_to(CoordinateSystem.default()) == pytest.approx((math.pi / 2, 0.0, 0.0))
 
 
 def test_left_handed_rejected():

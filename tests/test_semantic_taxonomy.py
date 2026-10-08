@@ -116,10 +116,7 @@ def test_words_drops_embed_false_facets_keeps_unknown_and_bare():
 
 
 def test_words_dedups_preserving_order():
-    assert (
-        words(["domain::office", "domain::office", "bareword", "bareword"])
-        == "office bareword"
-    )
+    assert words(["domain::office", "domain::office", "bareword", "bareword"]) == "office bareword"
 
 
 def test_words_empty_list():

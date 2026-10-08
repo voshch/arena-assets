@@ -24,11 +24,7 @@ def bucket(monkeypatch):
                 prefix = path.strip("/")
                 if prefix:
                     prefix += "/"
-                result[path] = [
-                    {"name": name, "size": str(len(data))}
-                    for name, data in self.blobs.items()
-                    if name.startswith(prefix)
-                ]
+                result[path] = [{"name": name, "size": str(len(data))} for name, data in self.blobs.items() if name.startswith(prefix)]
             return result
 
         def download(self, blob_name, local_path):

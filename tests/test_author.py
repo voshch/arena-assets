@@ -21,11 +21,7 @@ def bucket(monkeypatch):
             prefix = prefix.strip("/")
             if prefix:
                 prefix += "/"
-            return [
-                {"name": name, "size": str(len(data))}
-                for name, data in self.blobs.items()
-                if name.startswith(prefix)
-            ]
+            return [{"name": name, "size": str(len(data))} for name, data in self.blobs.items() if name.startswith(prefix)]
 
         def upload(self, local_path, blob_name):
             with open(local_path, "rb") as f:

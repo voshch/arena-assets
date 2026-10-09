@@ -7,10 +7,12 @@ import math
 import os
 import types
 import typing
+import xml.sax.saxutils
 from pathlib import Path
 
 import bpy
 import mathutils
+import numpy as np
 
 from arena_assets.utils.geom import BoundingBox
 from arena_assets.utils.logging import get_logger
@@ -18,8 +20,91 @@ from arena_assets.utils.logging import get_logger
 from ..CoordinateSystem import CoordinateSystem
 from ..io_utils import capture_all_output
 from . import ModelFormat, sdf_model
+from .lights import SourceLight, SourceMaterial
 
 logger = get_logger("ModelConverter")
+
+GLOW_MATERIALS = "glow_materials"
+
+
+def _principled(material: bpy.types.Material) -> bpy.types.Node | None:
+    if not material.use_nodes or material.node_tree is None:
+        return None
+    return next((node for node in material.node_tree.nodes if node.type == "BSDF_PRINCIPLED"), None)
+
+
+def _is_emissive(material: bpy.types.Material) -> bool:
+    principled = _principled(material)
+    if principled is None:
+        return False
+    color, strength = principled.inputs["Emission Color"], principled.inputs["Emission Strength"]
+    return not color.is_linked and not strength.is_linked and any(color.default_value[:3]) and strength.default_value > 0.0
+
+
+def _material_indices(mesh: bpy.types.Mesh) -> np.ndarray:
+    indices = np.empty(len(mesh.polygons), dtype=np.int32)
+    mesh.polygons.foreach_get("material_index", indices)
+    return indices
+
+
+def _material_faces(obj: bpy.types.Object) -> dict[str, np.ndarray]:
+    """Face masks of a mesh object by name of the material the faces use."""
+    indices = _material_indices(obj.data)
+    slots = obj.material_slots
+    faces: dict[str, np.ndarray] = {}
+    for index in np.unique(indices):
+        material = slots[min(int(index), len(slots) - 1)].material if slots else None
+        if material is not None:
+            faces[material.name] = faces.get(material.name, False) | (indices == index)
+    return faces
+
+
+def _face_points(obj: bpy.types.Object, faces: np.ndarray) -> np.ndarray:
+    """World-space corner positions of the masked faces of a mesh object."""
+    mesh = obj.data
+    totals = np.empty(len(mesh.polygons), dtype=np.int32)
+    mesh.polygons.foreach_get("loop_total", totals)
+    vertices = np.empty(len(mesh.loops), dtype=np.int32)
+    mesh.loops.foreach_get("vertex_index", vertices)
+    points = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
+    mesh.vertices.foreach_get("co", points)
+    matrix = np.array(obj.matrix_world)
+    return points.reshape(-1, 3)[vertices[np.repeat(faces, totals)]] @ matrix[:3, :3].T + matrix[:3, 3]
+
+
+def _keep_faces(mesh: bpy.types.Mesh, faces: np.ndarray) -> None:
+    """Delete every face of a mesh outside the mask and every material slot left without faces."""
+    import bmesh
+
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(mesh)
+        bmesh.ops.delete(bm, geom=[face for face, keep in zip(bm.faces, faces, strict=True) if not keep], context="FACES")
+        bm.to_mesh(mesh)
+    finally:
+        bm.free()
+    used = set(np.minimum(_material_indices(mesh), len(mesh.materials) - 1).tolist())
+    for index in reversed(range(len(mesh.materials))):
+        if index not in used:
+            mesh.materials.pop(index=index)
+
+
+def _unparent(obj: bpy.types.Object) -> None:
+    matrix = obj.matrix_world.copy()
+    obj.parent = None
+    obj.matrix_world = matrix
+
+
+def _glow_objects(materials: typing.Iterable[str]) -> dict[str, list[bpy.types.Object]]:
+    """Mesh objects of the scene whose faces all use one of the named materials, by material name."""
+    objects: dict[str, list[bpy.types.Object]] = {name: [] for name in materials}
+    for obj in bpy.context.scene.objects:
+        if obj.type != "MESH":
+            continue
+        for name, faces in _material_faces(obj).items():
+            if name in objects and faces.all():
+                objects[name].append(obj)
+    return objects
 
 
 class _ModelConverterExt(typing.Protocol):
@@ -163,6 +248,100 @@ class ModelConverter:
                 (min_corner.z, max_corner.z),
             )
         )
+
+    def lights(self) -> list[SourceLight]:
+        """Light objects of the scene in world coordinates, sorted by object name."""
+        bpy.context.view_layer.update()
+        down = mathutils.Vector((0.0, 0.0, -1.0))
+        return [
+            SourceLight(
+                name=obj.name,
+                type=obj.data.type,
+                shape=obj.data.shape if obj.data.type == "AREA" else "",
+                spot_size=obj.data.spot_size if obj.data.type == "SPOT" else 0.0,
+                power=obj.data.energy,
+                color=tuple(obj.data.color),
+                location=tuple(obj.matrix_world.translation),
+                direction=tuple(obj.matrix_world.to_3x3() @ down),
+            )
+            for obj in sorted(bpy.context.scene.objects, key=lambda obj: obj.name)
+            if obj.type == "LIGHT"
+        ]
+
+    def remove_lights(self) -> None:
+        """Delete every light object, keeping the world transform of its children."""
+        for obj in [obj for obj in bpy.context.scene.objects if obj.type == "LIGHT"]:
+            for child in obj.children:
+                _unparent(child)
+            light = obj.data
+            bpy.data.objects.remove(obj, do_unlink=True)
+            if light.users == 0:
+                bpy.data.lights.remove(light)
+        bpy.context.view_layer.update()
+
+    def materials(self) -> list[str]:
+        """Names of the materials used by mesh faces of the scene, sorted."""
+        return sorted({name for obj in bpy.context.scene.objects if obj.type == "MESH" for name in _material_faces(obj)})
+
+    def emissive_materials(self) -> list[SourceMaterial]:
+        """Materials with a constant emission used by mesh faces of the scene, sorted by name."""
+        bpy.context.view_layer.update()
+        corners: dict[str, list[np.ndarray]] = {}
+        for obj in bpy.context.scene.objects:
+            if obj.type != "MESH" or not any(slot.material is not None and _is_emissive(slot.material) for slot in obj.material_slots):
+                continue
+            for name, faces in _material_faces(obj).items():
+                if _is_emissive(bpy.data.materials[name]):
+                    points = _face_points(obj, faces)
+                    corners.setdefault(name, []).extend((points.min(axis=0), points.max(axis=0)))
+        return [SourceMaterial(name=name, center=tuple(((np.min(corners[name], axis=0) + np.max(corners[name], axis=0)) / 2).tolist())) for name in sorted(corners)]
+
+    def prepare_glow(self, materials: typing.Iterable[str]) -> None:
+        """Clear the emission of the named materials, move their faces into root objects of their own and record the names on the scene."""
+        glow = sorted(set(materials))
+        if not glow:
+            return
+        existing = self.materials()
+        if missing := [name for name in glow if name not in existing]:
+            raise ValueError(f"Glow material {', '.join(missing)} is not used by the model, its materials are: {', '.join(existing)}")
+
+        for name in glow:
+            material = bpy.data.materials[name]
+            principled = _principled(material)
+            if principled is None:
+                continue
+            color, strength = principled.inputs["Emission Color"], principled.inputs["Emission Strength"]
+            for link in (*color.links, *strength.links):
+                material.node_tree.links.remove(link)
+            color.default_value = (0.0, 0.0, 0.0, 1.0)
+            strength.default_value = 0.0
+
+        for obj in [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]:
+            faces = _material_faces(obj)
+            names = [name for name in glow if name in faces]
+            if names and np.logical_or.reduce([faces[name] for name in names]).all():
+                names.pop()
+            if not names:
+                continue
+            if obj.data.users > 1:
+                obj.data = obj.data.copy()
+            for name in names:
+                piece = obj.copy()
+                piece.data = obj.data.copy()
+                piece.name = f"{obj.name}_{name}"
+                for collection in obj.users_collection:
+                    collection.objects.link(piece)
+                _keep_faces(piece.data, faces[name])
+            _keep_faces(obj.data, ~np.logical_or.reduce([faces[name] for name in names]))
+
+        bpy.context.view_layer.update()
+        for objects in _glow_objects(glow).values():
+            for obj in objects:
+                for child in obj.children:
+                    _unparent(child)
+                _unparent(obj)
+        bpy.context.view_layer.update()
+        bpy.context.scene[GLOW_MATERIALS] = glow
 
     def bind_uv_maps(self) -> None:
         """Bind each material's image textures to the UV layer holding its UVs."""
@@ -488,13 +667,49 @@ ModelConverter.register(ModelFormat.FBX)(
 ModelConverter.register(ModelFormat.DAE)(_ModelConverterExt.inline(CoordinateSystem.default(), bpy.ops.wm.collada_import, bpy.ops.wm.collada_export))
 
 
+def _collada_export(path: Path, objects: typing.Iterable[bpy.types.Object]) -> None:
+    bpy.ops.object.select_all(action="DESELECT")
+    try:
+        for obj in objects:
+            obj.select_set(True)
+        bpy.ops.wm.collada_export(filepath=str(path), selected=True)
+    finally:
+        bpy.ops.object.select_all(action="DESELECT")
+
+
+def _sdf_material(material: bpy.types.Material) -> str:
+    principled = _principled(material)
+    if principled is None or principled.inputs["Base Color"].is_linked:
+        return ""
+    color = " ".join(f"{round(channel, 4):g}" for channel in principled.inputs["Base Color"].default_value[:3])
+    return f"""
+        <material>
+          <ambient>{color} 1</ambient>
+          <diffuse>{color} 1</diffuse>
+          <specular>0 0 0 1</specular>
+          <emissive>0 0 0 1</emissive>
+        </material>"""
+
+
 def sdf_export(filepath: str):
     base_path = Path(filepath)
-    dae_path = base_path / f"{base_path.stem}.dae"
-    bpy.ops.wm.collada_export(filepath=str(dae_path))
-
-    sdf_path = base_path / f"{base_path.stem}.sdf"
-    sdf_path.write_text(sdf_model(base_path.stem))
+    stem = base_path.stem
+    glow = _glow_objects(bpy.context.scene.get(GLOW_MATERIALS, ()))
+    plain = True
+    visuals = []
+    if glow:
+        apart = {obj.name for objects in glow.values() for obj in objects}
+        rest = [obj for obj in bpy.context.view_layer.objects if obj.name not in apart]
+        plain = any(obj.type == "MESH" for obj in rest)
+        if plain:
+            _collada_export(base_path / f"{stem}.dae", rest)
+        for index, (name, objects) in enumerate(glow.items()):
+            uri = f"{stem}.glow_{index}.dae"
+            _collada_export(base_path / uri, objects)
+            visuals.append((xml.sax.saxutils.escape(f"glow_{name}", {'"': "&quot;"}), uri, _sdf_material(bpy.data.materials[name])))
+    else:
+        bpy.ops.wm.collada_export(filepath=str(base_path / f"{stem}.dae"))
+    (base_path / f"{stem}.sdf").write_text(sdf_model(stem, visuals, plain=plain))
 
 
 ModelConverter.register(ModelFormat.SDF)(

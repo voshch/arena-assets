@@ -1,4 +1,5 @@
 import enum
+from collections.abc import Sequence
 
 
 class ModelFormat(enum.StrEnum):
@@ -14,27 +15,28 @@ class ModelFormat(enum.StrEnum):
     SDF = "sdf"
 
 
-def sdf_model(stem: str) -> str:
-    """Static SDF model whose visual and collision are both the sibling `{stem}.dae`."""
+def _mesh_element(tag: str, name: str, uri: str, material: str = "") -> str:
+    return f"""      <{tag} name="{name}">
+        <geometry>
+          <mesh>
+            <uri>{uri}</uri>
+          </mesh>
+        </geometry>{material}
+      </{tag}>"""
+
+
+def sdf_model(stem: str, glow: Sequence[tuple[str, str, str]] = (), *, plain: bool = True) -> str:
+    """Static SDF model whose visual and collision are the sibling `{stem}.dae`, plus a visual and a collision per glow mesh (name, uri, material)."""
+    parts = [_mesh_element("visual", "visual", f"{stem}.dae"), _mesh_element("collision", "collision", f"{stem}.dae")] if plain else []
+    for index, (name, uri, material) in enumerate(glow):
+        parts += [_mesh_element("visual", name, uri, material), _mesh_element("collision", f"collision_glow_{index}", uri)]
+    link = "\n".join(parts)
     return f"""<?xml version="1.0" ?>
 <sdf version="1.7">
   <model name="{stem}">
     <static>true</static>
     <link name="link">
-      <visual name="visual">
-        <geometry>
-          <mesh>
-            <uri>{stem}.dae</uri>
-          </mesh>
-        </geometry>
-      </visual>
-      <collision name="collision">
-        <geometry>
-          <mesh>
-            <uri>{stem}.dae</uri>
-          </mesh>
-        </geometry>
-      </collision>
+{link}
     </link>
   </model>
 </sdf>"""

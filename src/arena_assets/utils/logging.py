@@ -43,7 +43,9 @@ def get_manager() -> enlighten.Manager:
 def get_logger(name: str | None = None) -> logging.Logger:
     """Get a logger instance. If name is provided, return a child logger."""
     if name:
-        return _logger.getChild(name)
+        logger = _logger.getChild(name)
+        logger.propagate = True
+        return logger
     return _logger
 
 

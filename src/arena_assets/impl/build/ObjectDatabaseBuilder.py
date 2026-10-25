@@ -39,6 +39,7 @@ if typing.TYPE_CHECKING:
 logger = get_logger("build.object")
 
 LUMENS_PER_WATT = 683.0
+ISAAC_EXPOSURE_GAIN = 5.0
 MAX_CONE_DEG = 179.99
 
 
@@ -83,6 +84,7 @@ class ObjectLight:
     cct_K: float = attrs.field(default=DEFAULT_CCT_K, converter=float, validator=_positive)
     cone_deg: float | None = attrs.field(default=None, converter=attrs.converters.optional(float), validator=attrs.validators.optional(_cone))
     glow: str | None = attrs.field(default=None, converter=attrs.converters.optional(str))
+    link: str | None = attrs.field(default=None, converter=attrs.converters.optional(str))
 
 
 def _structure_lights(value: Iterable[typing.Any] | None) -> list[ObjectLight]:
@@ -110,6 +112,15 @@ def _fixture(source: SourceLight) -> LightFixture | None:
     return None
 
 
+def light_lumens(source: SourceLight, fixture: LightFixture) -> float:
+    """Lumens the runtime renders a source light with: a UsdLux light as authored in Isaac, a Blender light at 683 lm/W with a spot keeping its cone share of its point-equivalent power."""
+    cone_share = math.sin(min(source.spot_size, math.radians(MAX_CONE_DEG)) / 2.0) ** 2 if fixture is LightFixture.SPOT else 1.0
+    if source.radiance is not None:
+        area = source.face_area * cone_share if fixture is LightFixture.SPOT else source.area
+        return math.pi * source.radiance * area / ISAAC_EXPOSURE_GAIN
+    return source.power * LUMENS_PER_WATT * (cone_share / 4.0 if fixture is LightFixture.SPOT else 1.0)
+
+
 def object_lights(sources: Iterable[SourceLight], materials: Iterable[SourceMaterial] = ()) -> list[ObjectLight]:
     """Object lights for the lights of a source model, named light, light_1, ... in source name order, each glowing the nearest material."""
     materials = list(materials)
@@ -119,9 +130,9 @@ def object_lights(sources: Iterable[SourceLight], materials: Iterable[SourceMate
         if fixture is None:
             logger.warning("Skipping %s light %s, an object cannot carry it", source.type, source.name)
             continue
-        lumens = _round(source.power * LUMENS_PER_WATT, 1)
+        lumens = _round(light_lumens(source, fixture), 1)
         if lumens <= 0.0:
-            logger.warning("Skipping light %s with power %s W", source.name, source.power)
+            logger.warning("Skipping light %s that emits nothing (%s W, radiance %s, area %s m2)", source.name, source.power, source.radiance, source.area)
             continue
         mapped.append((fixture, source, lumens))
 
@@ -136,9 +147,10 @@ def object_lights(sources: Iterable[SourceLight], materials: Iterable[SourceMate
                     (1.0, 0.0, 0.0, 0.0) if fixture is LightFixture.BULB else tuple(_round(component, 6) for component in source.rotation),
                 ),
                 lumens=lumens,
-                cct_K=color_temperature(source.color),
+                cct_K=color_temperature(source.color) if source.cct_K is None else source.cct_K,
                 cone_deg=min(_round(math.degrees(source.spot_size), 2), MAX_CONE_DEG) if fixture is LightFixture.SPOT else None,
                 glow=nearest_material(source.location, materials),
+                link=source.link or None,
             )
         )
     return lights
@@ -332,7 +344,7 @@ def _structure_light(value: typing.Any, _: type) -> ObjectLight:
 
 
 converter.register_structure_hook(ObjectLight, _structure_light)
-converter.register_unstructure_hook(ObjectLight, make_dict_unstructure_fn(ObjectLight, converter, cone_deg=override(omit_if_default=True), glow=override(omit_if_default=True)))
+converter.register_unstructure_hook(ObjectLight, make_dict_unstructure_fn(ObjectLight, converter, cone_deg=override(omit_if_default=True), glow=override(omit_if_default=True), link=override(omit_if_default=True)))
 converter.register_structure_hook(ObjectAnnotation, make_dict_structure_fn(ObjectAnnotation, converter, _cattrs_detailed_validation=False))
 converter.register_unstructure_hook(
     ObjectAnnotation,
@@ -455,7 +467,8 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
             textures = Path(tempfile.mkdtemp(prefix=".textures-", dir=dest))
             try:
                 load_options = [{"merge_parent_xform": False}] if annotation.articulation is not None and self.is_usd(input_file.name) else []
-                scan = self._blender.run([("load", str(input_file), *load_options), ("rectify",), ("bounding_box",), ("lights",), ("remove_lights",), ("emissive_materials",), *([("triangles",)] if annotation.affordances else [])], keep=True)
+                lights_step = ("lights", str(Path(annotation.path) / main_file) if self.is_usd(main_file) else None, *([annotation.articulation.links, annotation.articulation.root] if annotation.articulation is not None else []))
+                scan = self._blender.run([("load", str(input_file), *load_options), ("rectify",), ("bounding_box",), lights_step, ("remove_lights",), ("emissive_materials",), *([("triangles",)] if annotation.affordances else [])], keep=True)
                 try:
                     rectified = np.array(scan.values[1])
                     articulation = self._built_articulation(annotation, rectified)

@@ -45,10 +45,10 @@ def _mesh(name, extents):
     return f'def Mesh "{name}"\n{{\nint[] faceVertexCounts = [4, 4, 4, 4, 4, 4]\nint[] faceVertexIndices = {BOX_FACES}\npoint3f[] points = [{points}]\n}}\n'
 
 
-def _write_cabinet(directory, articulation=ARTICULATION):
+def _write_cabinet(directory, articulation=ARTICULATION, root_extra="", door_extra=""):
     """Cabinet a meter off the floor: base and plate meshes, door and drawer Xforms holding one mesh each."""
     directory.mkdir(parents=True, exist_ok=True)
-    body = _mesh("base", PARTS["base"]) + _mesh("plate", PARTS["plate"]) + f'def Xform "door"\n{{\n{_mesh("panel", PARTS["panel"])}}}\n' + f'def Xform "drawer"\n{{\n{_mesh("tray", PARTS["tray"])}}}\n'
+    body = root_extra + _mesh("base", PARTS["base"]) + _mesh("plate", PARTS["plate"]) + f'def Xform "door"\n{{\n{_mesh("panel", PARTS["panel"])}{door_extra}}}\n' + f'def Xform "drawer"\n{{\n{_mesh("tray", PARTS["tray"])}}}\n'
     (directory / "cabinet.usda").write_text(f'#usda 1.0\n(\ndefaultPrim = "Root"\nmetersPerUnit = 1\nupAxis = "Z"\n)\ndef Xform "Root"\n{{\n{body}}}\n')
     annotation = {"desc": "cabinet"}
     if articulation is not None:
@@ -336,3 +336,23 @@ def test_build_skips_an_object_whose_articulation_does_not_parse(tmp_path):
 
     assert isinstance(annotation, ValueError)
     assert "joint 'hinge': revolute joint hinge needs a limit: [lower, upper]" in str(annotation)
+
+
+def test_build_puts_each_light_on_the_link_its_node_sits_under(blender, tmp_path):
+    from arena_assets.impl import converter
+    from arena_assets.impl.build.ObjectDatabaseBuilder import ObjectDatabaseBuilder
+
+    source = tmp_path / "input" / "Object" / "cabinet"
+    lamp = 'def SphereLight "lamp"\n{\ndouble3 xformOp:translate = (1.02, 0.25, 1.8)\nuniform token[] xformOpOrder = ["xformOp:translate"]\nfloat inputs:radius = 0.02\nfloat inputs:intensity = 2000\n}\n'
+    glow = 'def RectLight "glow"\n{\ndouble3 xformOp:translate = (0.5, 0.25, 1.9)\nuniform token[] xformOpOrder = ["xformOp:translate"]\nfloat inputs:width = 0.2\nfloat inputs:height = 0.2\nfloat inputs:intensity = 500\n}\n'
+    _write_cabinet(source, root_extra=glow, door_extra=lamp)
+    builder = ObjectDatabaseBuilder(tmp_path / "input", tmp_path / "output")
+    builder.enable("formats", "usdz,sdf")
+    dest = tmp_path / "output" / "Object" / "cabinet"
+    dest.mkdir(parents=True)
+    built = builder.process_entity(builder.read_annotation_file(source), dest)
+
+    assert built is not None
+    assert [(light.name, light.fixture.value, light.link) for light in built.lights] == [("light", "panel", "cabinet"), ("light_1", "bulb", "door")]
+    assert built.lights[1].pose[0] == pytest.approx((1.02, 0.25, 0.8), abs=1e-3)
+    assert [light["link"] for light in converter.unstructure(built)["lights"]] == ["cabinet", "door"]

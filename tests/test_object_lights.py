@@ -9,9 +9,11 @@ import yaml
 
 from arena_assets.impl import ANNOTATION_NAME, Face, converter
 from arena_assets.impl.build.ObjectDatabaseBuilder import (
+    ISAAC_EXPOSURE_GAIN,
     LightFixture,
     ObjectAnnotation,
     ObjectLight,
+    light_lumens,
     object_lights,
 )
 from arena_assets.utils.geom import BoundingBox
@@ -211,6 +213,35 @@ def test_powerless_light_is_skipped_with_warning(caplog):
 def test_power_converts_to_lumens_at_683_per_watt():
     (light,) = object_lights([source(power=1.5)])
     assert light.lumens == 1024.5
+
+
+def test_blender_spot_keeps_the_cone_share_of_its_point_equivalent_power():
+    (light,) = object_lights([source(type="SPOT", power=5.0, spot_size=math.radians(60.0))])
+    assert light.lumens == pytest.approx(683.0 * 5.0 * 0.25 / 4.0, abs=0.05)
+
+
+def test_usd_panel_lumens_carry_its_radiance_over_its_world_area_to_isaac():
+    (light,) = object_lights([source(type="AREA", shape="RECTANGLE", radiance=20000.0, area=0.0341, face_area=0.0341, power=62832.0)])
+    assert light.lumens == pytest.approx(math.pi * 20000.0 * 0.0341 / ISAAC_EXPOSURE_GAIN, abs=0.05)
+
+
+def test_usd_spot_lumens_keep_the_on_axis_intensity_of_its_face():
+    spot = source(type="SPOT", spot_size=math.radians(40.0), radiance=1000.0, area=4.0, face_area=1.0)
+    assert light_lumens(spot, LightFixture.SPOT) == pytest.approx(math.pi * 1000.0 * math.sin(math.radians(20.0)) ** 2 / ISAAC_EXPOSURE_GAIN)
+
+
+def test_usd_color_temperature_overrides_the_light_color():
+    (light,) = object_lights([source(color=(1.0, 0.6, 0.3), cct_K=6200.0, radiance=1.0, area=1.0)])
+    assert light.cct_K == 6200.0
+
+
+def test_light_link_is_kept_and_written_only_when_set():
+    lights = object_lights([source(name="a", link="door"), source(name="b")])
+    assert [light.link for light in lights] == ["door", None]
+    written = converter.unstructure(lights[0]), converter.unstructure(lights[1])
+    assert written[0]["link"] == "door"
+    assert "link" not in written[1]
+    assert converter.structure(written[0], ObjectLight) == lights[0]
 
 
 def test_straight_spot_cone_stays_below_180():
@@ -474,12 +505,15 @@ def _scene_types(python, path):
 
 
 def _build_lamp(python, tmp_path, annotation, script=LAMP_SOURCE_SCRIPT):
+    _write_lamp_source(python, tmp_path / "input" / "Object" / "lamp", annotation, script)
+    return _build_written_lamp(tmp_path)
+
+
+def _build_written_lamp(tmp_path):
     from arena_assets.impl.build.ObjectDatabaseBuilder import ObjectDatabaseBuilder
 
     input_path = tmp_path / "input"
     output_path = tmp_path / "output"
-    _write_lamp_source(python, input_path / "Object" / "lamp", annotation, script)
-
     builder = ObjectDatabaseBuilder(input_path, output_path)
     builder.enable("formats", "usdz,sdf,fbx")
     dest = output_path / "Object" / "lamp"
@@ -516,7 +550,7 @@ def test_build_extracts_source_lights_and_strips_them_from_every_model(blender_p
     assert spot.fixture is LightFixture.SPOT
     assert spot.pose[0] == pytest.approx((0.5, 0.0, 1.5), abs=1e-3)
     assert emission(spot) == pytest.approx((0.0, 0.5, -0.866), abs=1e-3)
-    assert spot.lumens == pytest.approx(3415.0, rel=1e-3)
+    assert spot.lumens == pytest.approx(213.4, rel=1e-3)
     assert spot.cct_K < 4000.0
     assert spot.cone_deg == pytest.approx(60.0, abs=0.1)
 
@@ -647,3 +681,94 @@ def test_build_without_glow_materials_writes_single_visual_sdf(blender_python, t
     assert [light.glow for light in built.lights] == [None, None]
     assert sorted(path.name for path in (dest / "lamp.sdf").iterdir()) == ["lamp.dae", "lamp.sdf"]
     assert _link(dest / "lamp.sdf" / "lamp.sdf") == _plain()
+
+
+def _box_mesh(name, size):
+    half = size / 2.0
+    points = ", ".join(f"({x}, {y}, {z})" for x in (-half, half) for y in (-half, half) for z in (-half, half))
+    return f'def Mesh "{name}"\n{{\nint[] faceVertexCounts = [4, 4, 4, 4, 4, 4]\nint[] faceVertexIndices = [0, 1, 3, 2, 4, 6, 7, 5, 0, 4, 5, 1, 2, 3, 7, 6, 0, 2, 6, 4, 1, 5, 7, 3]\npoint3f[] points = [{points}]\n}}\n'
+
+
+USD_LAMP = f"""#usda 1.0
+(
+    defaultPrim = "Root"
+    metersPerUnit = 0.01
+    upAxis = "Y"
+)
+def Xform "Root"
+{{
+    {_box_mesh("Body", 50.0)}
+    def Xform "Shade"
+    {{
+        double3 xformOp:translate = (0, 100, 0)
+        float3 xformOp:scale = (2, 2, 2)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        {_box_mesh("Glass", 5.0)}
+        def RectLight "Panel"
+        {{
+            float inputs:width = 10
+            float inputs:height = 5
+            float inputs:intensity = 20000
+            float inputs:exposure = 1
+            bool inputs:enableColorTemperature = 1
+            float inputs:colorTemperature = 3000
+        }}
+        def DiskLight "Disk"
+        {{
+            float inputs:radius = 3
+            float inputs:intensity = 100
+            bool inputs:normalize = 1
+        }}
+    }}
+    def SphereLight "Spot" (
+        prepend apiSchemas = ["ShapingAPI"]
+    )
+    {{
+        float inputs:radius = 2
+        float inputs:intensity = 500000
+        float inputs:shaping:cone:angle = 30
+        double3 xformOp:translate = (0, 80, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }}
+    def Xform "Socket"
+    {{
+        double3 xformOp:translate = (20, 60, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        def SphereLight "Bulb"
+        {{
+            float inputs:radius = 5
+            float inputs:intensity = 10000
+        }}
+    }}
+}}
+"""
+
+
+def _authored(intensity, area):
+    return math.pi * intensity * area / ISAAC_EXPOSURE_GAIN
+
+
+def test_build_reads_usd_light_photometry_from_usdlux(blender_python, tmp_path):
+    source = tmp_path / "input" / "Object" / "lamp"
+    source.mkdir(parents=True)
+    (source / "lamp.usda").write_text(USD_LAMP)
+    (source / ANNOTATION_NAME).write_text(yaml.safe_dump({"desc": "desk lamp"}))
+    built, _ = _process_lamp_written(tmp_path)
+
+    bulb, disk, panel, spot = built.lights
+    assert (bulb.fixture, disk.fixture, panel.fixture, spot.fixture) == (LightFixture.BULB, LightFixture.DOWNLIGHT, LightFixture.PANEL, LightFixture.SPOT)
+    assert bulb.lumens == pytest.approx(_authored(10000.0, 4.0 * math.pi * 0.05**2), abs=0.1)
+    assert disk.lumens == pytest.approx(_authored(100.0, 1.0), abs=0.1)
+    assert panel.lumens == pytest.approx(_authored(20000.0 * 2.0, 0.2 * 0.1), abs=0.1)
+    assert spot.lumens == pytest.approx(_authored(500000.0, math.pi * 0.02**2) * 0.25, abs=0.1)
+    assert spot.cone_deg == pytest.approx(60.0, abs=0.01)
+    assert (panel.cct_K, bulb.cct_K) == (3000.0, 6500.0)
+    assert panel.pose[0] == pytest.approx((0.0, 0.0, 1.25), abs=1e-3)
+    assert bulb.pose[0] == pytest.approx((0.2, 0.0, 0.85), abs=1e-3)
+    assert all(light.link is None for light in built.lights)
+
+
+def _process_lamp_written(tmp_path):
+    built, dest = _build_written_lamp(tmp_path)
+    assert built is not None
+    return built, dest

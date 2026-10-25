@@ -2,6 +2,8 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
+from arena_assets_blender.lights import UsdLight, matching_prim
+
 
 def _link(path):
     """Visuals and collisions of a model SDF as (tag, name, uri, material diffuse)."""
@@ -83,3 +85,24 @@ def test_sdf_of_fully_glowing_model_has_only_glow_visual(tmp_path):
 
     assert _link(tmp_path / "lamp.sdf" / "lamp.sdf") == _glow(0, "Shade", "0.8 0.8 0.8")
     assert sorted(path.name for path in (tmp_path / "lamp.sdf").iterdir()) == ["lamp.glow_0.dae", "lamp.sdf"]
+
+
+def _prim(*names):
+    return UsdLight(names=names, kind="RectLight", intensity=1.0)
+
+
+def test_light_object_matches_the_prim_of_its_full_lineage():
+    prims = [_prim("root", "door", "RectLight"), _prim("root", "RectLight")]
+    assert matching_prim(["RectLight", "door", "root"], prims) == prims[0]
+    assert matching_prim(["RectLight", "root"], prims) == prims[1]
+
+
+def test_light_object_matches_its_prim_across_a_merged_xform():
+    prims = [_prim("root", "socket", "bulb")]
+    assert matching_prim(["bulb", "root"], prims) == prims[0]
+
+
+def test_light_object_matches_no_prim_of_another_name_or_branch():
+    prims = [_prim("root", "door", "lamp")]
+    assert matching_prim(["glow", "door", "root"], prims) is None
+    assert matching_prim(["lamp", "drawer", "root"], prims) is None

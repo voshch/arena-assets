@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import functools
 import io
 import logging
@@ -20,8 +21,8 @@ from . import ModelFormat, sdf_model
 from .CoordinateSystem import CoordinateSystem
 from .geom import BoundingBox
 from .io_utils import capture_all_output
-from .lights import SourceLight, SourceMaterial
-from .links import LinkBox, LinkObjects, base_name
+from .lights import SourceLight, SourceMaterial, UsdLight, matching_prim
+from .links import LinkBox, LinkObjects, base_name, link_of, node_links
 from .textures import TextureLimit, limited
 
 logger = logging.getLogger("ModelConverter")
@@ -89,6 +90,66 @@ def _keep_faces(mesh: bpy.types.Mesh, faces: np.ndarray) -> None:
     for index in reversed(range(len(mesh.materials))):
         if index not in used:
             mesh.materials.pop(index=index)
+
+
+def usd_lights(path: str) -> list[UsdLight]:
+    """Rect, disk and sphere UsdLux lights of a USD stage."""
+    bpy.utils.expose_bundled_modules()
+    from pxr import Usd, UsdLux
+
+    stage = Usd.Stage.Open(path)
+    found = []
+    for prim in stage.Traverse(Usd.TraverseInstanceProxies(Usd.PrimDefaultPredicate)):
+        if prim.IsA(UsdLux.RectLight):
+            rect = UsdLux.RectLight(prim)
+            size = {"width": rect.GetWidthAttr().Get(), "height": rect.GetHeightAttr().Get()}
+        elif prim.IsA(UsdLux.DiskLight):
+            size = {"radius": UsdLux.DiskLight(prim).GetRadiusAttr().Get()}
+        elif prim.IsA(UsdLux.SphereLight):
+            size = {"radius": UsdLux.SphereLight(prim).GetRadiusAttr().Get()}
+        else:
+            continue
+        light = UsdLux.LightAPI(prim)
+        cone = UsdLux.ShapingAPI(prim).GetShapingConeAngleAttr().Get()
+        found.append(
+            UsdLight(
+                names=tuple(str(prim.GetPath()).strip("/").split("/")),
+                kind=prim.GetTypeName(),
+                **{key: float(value) for key, value in size.items() if value is not None},
+                intensity=float(light.GetIntensityAttr().Get() or 0.0),
+                exposure=float(light.GetExposureAttr().Get() or 0.0),
+                normalize=bool(light.GetNormalizeAttr().Get()),
+                cct_K=float(light.GetColorTemperatureAttr().Get() or 6500.0) if light.GetEnableColorTemperatureAttr().Get() else None,
+                cone_deg=2.0 * float(cone) if cone is not None and cone < 90.0 else None,
+            )
+        )
+    return found
+
+
+def _usd_light(light: SourceLight, prim: UsdLight, scale: mathutils.Vector) -> SourceLight:
+    """A light with the photometry, shape and cone of the UsdLux prim it was imported from, sized by its world scale."""
+    sx, sy, sz = (abs(component) for component in scale)
+    if prim.kind == "RectLight":
+        area = face = prim.width * sx * prim.height * sy
+        kind, shape = "AREA", "RECTANGLE"
+    elif prim.kind == "DiskLight":
+        area = face = math.pi * prim.radius**2 * sx * sy
+        kind, shape = "AREA", "DISK"
+    else:
+        radius = prim.radius * (sx * sy * sz) ** (1.0 / 3.0)
+        area, face = 4.0 * math.pi * radius**2, math.pi * radius**2
+        kind, shape = "POINT", ""
+    radiance = prim.intensity * 2.0**prim.exposure / (area if prim.normalize and area > 0.0 else 1.0)
+    return dataclasses.replace(
+        light,
+        type=kind if prim.cone_deg is None else "SPOT",
+        shape=shape,
+        spot_size=0.0 if prim.cone_deg is None else math.radians(prim.cone_deg),
+        radiance=radiance,
+        area=area,
+        face_area=face,
+        cct_K=prim.cct_K,
+    )
 
 
 def _unparent(obj: bpy.types.Object) -> None:
@@ -322,11 +383,17 @@ class ModelConverter:
             return np.zeros((0, 3)), np.zeros((0, 3), np.int64)
         return np.concatenate(points), np.concatenate(triangles)
 
-    def lights(self) -> list[SourceLight]:
-        """Light objects of the scene in world coordinates, sorted by object name."""
+    def lights(self, usd: str | None = None, links: dict[str, list[str]] | None = None, root: str = "") -> list[SourceLight]:
+        """Light objects of the scene in world coordinates, sorted by object name, with the photometry of the UsdLux prims of usd and on the articulation links when given."""
         bpy.context.view_layer.update()
-        return [
-            SourceLight(
+        prims = usd_lights(usd) if usd else []
+        owners = node_links(links or {})
+        found = []
+        for obj in sorted(bpy.context.scene.objects, key=lambda obj: obj.name):
+            if obj.type != "LIGHT":
+                continue
+            lineage = self._lineage(obj)
+            light = SourceLight(
                 name=obj.name,
                 type=obj.data.type,
                 shape=obj.data.shape if obj.data.type == "AREA" else "",
@@ -335,10 +402,14 @@ class ModelConverter:
                 color=tuple(obj.data.color),
                 location=tuple(obj.matrix_world.translation),
                 rotation=tuple(obj.matrix_world.decompose()[1]),
+                link=link_of(lineage, owners, root) if links is not None else "",
             )
-            for obj in sorted(bpy.context.scene.objects, key=lambda obj: obj.name)
-            if obj.type == "LIGHT"
-        ]
+            prim = matching_prim([base_name(name) for name in lineage], prims)
+            if prim is not None:
+                prims.remove(prim)
+                light = _usd_light(light, prim, obj.matrix_world.to_scale())
+            found.append(light)
+        return found
 
     def remove_lights(self) -> None:
         """Delete every light object, keeping the world transform of its children."""
@@ -429,12 +500,12 @@ class ModelConverter:
     def split_links(self, links: dict[str, list[str]], root: str) -> list[LinkObjects]:
         """Assign every mesh object to the link naming it or its nearest listed ancestor, root taking the rest, and unparent the meshes."""
         bpy.context.view_layer.update()
-        owners = {base_name(node): link for link, nodes in links.items() for node in nodes}
+        owners = node_links(links)
         known = {base_name(name) for obj in bpy.context.scene.objects for name in self._lineage(obj)}
         if missing := sorted(set(owners) - known):
             raise ValueError(f"articulation nodes {', '.join(missing)} match no object of the model, its objects are: {', '.join(sorted(obj.name for obj in bpy.context.scene.objects))}")
         meshes = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
-        self._links = {obj.name: next((owners[base] for name in self._lineage(obj) if (base := base_name(name)) in owners), root) for obj in meshes}
+        self._links = {obj.name: link_of(self._lineage(obj), owners, root) for obj in meshes}
         for obj in meshes:
             self._detach(obj)
         bpy.context.view_layer.update()

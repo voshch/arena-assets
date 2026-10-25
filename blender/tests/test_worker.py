@@ -95,7 +95,8 @@ def test_lights_come_back_as_records(tmp_path):
     assert reply["ok"], reply.get("error")
     _, (light,), removed, after, materials = reply["values"]
     assert (light["name"], light["type"], light["shape"], light["spot_size"]) == ("Bulb", "POINT", "", 0.0)
-    assert set(light) == {"name", "type", "shape", "spot_size", "power", "color", "location", "rotation"}
+    assert set(light) == {"name", "type", "shape", "spot_size", "power", "color", "location", "rotation", "radiance", "area", "face_area", "cct_K", "link"}
+    assert (light["radiance"], light["area"], light["face_area"], light["cct_K"], light["link"]) == (None, 0.0, 0.0, None, "")
     assert light["location"] == pytest.approx([0.0, 0.0, 2.0], abs=1e-3)
     assert (removed, after, materials) == (None, [], [])
 

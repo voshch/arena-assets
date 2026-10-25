@@ -41,8 +41,12 @@ def test_registry_lists_importers_by_kind_then_source():
         ("material", "ambientcg"),
         ("material", "polyhaven"),
         ("object", "ai2thor"),
+        ("object", "artiverse"),
+        ("object", "artvip"),
         ("object", "gso"),
+        ("object", "infinigen"),
         ("object", "openrobotics"),
+        ("object", "partnet_mobility"),
         ("object", "simready"),
         ("object", "simready_dsx"),
         ("scenario", "eth_ucy"),
@@ -84,7 +88,7 @@ def test_meta_lookup_and_membership():
 
 
 def test_meta_error_lists_the_sources_of_the_kind():
-    with pytest.raises(KeyError, match="no object importer 'nope', registered: ai2thor, gso, openrobotics, simready, simready_dsx"):
+    with pytest.raises(KeyError, match="no object importer 'nope', registered: ai2thor, artiverse, artvip, gso, infinigen, openrobotics, partnet_mobility, simready, simready_dsx"):
         IMPORTERS.meta("object", "nope")
 
 

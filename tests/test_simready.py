@@ -11,7 +11,8 @@ from PIL import Image
 from arena_assets.impl import ANNOTATION_NAME
 from arena_assets.importers import ATTRIBUTION_FILE, IMPORTERS, read_attribution
 from arena_assets.importers.providers import HFHub
-from arena_assets.importers.simready import KEPT, SimReady, SimReadyDSX, description, kind
+from arena_assets.importers.simready import KEPT, SimReady, SimReadyDSX, description, joint_name, kind, link_name
+from blender_scene import owners, scene, unmatched
 from http_host import Host
 
 ITEM = "bin_waste_a01"
@@ -101,6 +102,99 @@ def package(host: Host, item: str = ITEM, repo: str = SimReady.REPO, revision: s
     return files
 
 
+ARTICULATED = "bed_test_a01"
+BODIES = {"base_01": (0.0, 0.0, 0.0), "wheelPin_01": (0.9, -0.3, 0.15), "wheel_01": (0.95, -0.3, 0.07), "brake_01": (-0.98, 0.0, 0.12), "baseGlass_01": (0.0, 0.0, 0.0)}
+
+
+def _body(name: str, at: tuple[float, float, float]) -> str:
+    points = ", ".join(f"({x}, {y}, {z})" for x in (0, 0.05) for y in (0, 0.05) for z in (0, 0.05))
+    return f"""
+        def Xform "{name}_obj_00"
+        {{
+            double3 xformOp:translate = ({at[0]}, {at[1]}, {at[2]})
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+
+            def Mesh "{name}_mesh_00"
+            {{
+                int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+                int[] faceVertexIndices = [0, 1, 3, 2, 4, 6, 7, 5, 0, 4, 5, 1, 2, 3, 7, 6, 0, 2, 6, 4, 1, 5, 7, 3]
+                point3f[] points = [{points}]
+            }}
+
+            def Scope "VisualMaterials"
+            {{
+            }}
+        }}
+"""
+
+
+def _joint(kind: str, name: str, body0: str, body1: str, position: tuple[float, ...], axis: str = "Z", limits: tuple[str, str] | None = None) -> str:
+    fields = [
+        f"rel physics:body0 = </RootNode/Geometry/{body0}_obj_00/{body0}_mesh_00>",
+        f"rel physics:body1 = </RootNode/Geometry/{body1}_obj_00/{body1}_mesh_00>",
+        f"point3f physics:localPos0 = {position}",
+        "point3f physics:localPos1 = (0, 0, 0)",
+        "quatf physics:localRot0 = (1, 0, 0, 0)",
+        *([f'uniform token physics:axis = "{axis}"'] if kind != "PhysicsFixedJoint" else []),
+        *([f"float physics:lowerLimit = {limits[0]}", f"float physics:upperLimit = {limits[1]}"] if limits else []),
+    ]
+    body = "".join(f"            {field}\n" for field in fields)
+    return f'        def {kind} "joint_{name}_joint_00"\n        {{\n{body}        }}\n'
+
+
+def articulated_package(host: Host) -> dict[str, bytes]:
+    """Serve a SimReady package laid out like bed_hospital_standard_a01: instanced body Xforms holding one mesh each, joints in the physics payload naming the meshes."""
+    files = package(host, item=ARTICULATED)
+    root = ROOT.replace(ITEM, ARTICULATED)
+    bodies = "".join(_body(name, at) for name, at in BODIES.items())
+    files[root] = f"""#usda 1.0
+(
+    defaultPrim = "RootNode"
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Xform "RootNode" (
+    prepend payload = @./payloads/Physics/physics.usda@
+)
+{{
+    def Xform "Geometry"
+    {{{bodies}    }}
+}}
+""".encode()
+    pin, wheel, brake = (BODIES[name] for name in ("wheelPin_01", "wheel_01", "brake_01"))
+    overs = "".join(f'        over "{name}_obj_00" (\n            prepend apiSchemas = ["PhysicsRigidBodyAPI"]\n        )\n        {{\n        }}\n' for name in BODIES)
+    joints = "".join(
+        [
+            _joint("PhysicsRevoluteJoint", "wheelPin_01", "base_01", "wheelPin_01", pin, "Z", ("-inf", "inf")),
+            _joint("PhysicsRevoluteJoint", "wheel_01", "wheelPin_01", "wheel_01", tuple(round(w - p, 6) for w, p in zip(wheel, pin, strict=True)), "Y", ("-inf", "inf")),
+            _joint("PhysicsRevoluteJoint", "brake_01", "base_01", "brake_01", brake, "X", ("0", "30")),
+            _joint("PhysicsFixedJoint", "baseGlass_01", "base_01", "baseGlass_01", (0.0, 0.0, 0.0)),
+        ]
+    )
+    files["simready_usd/payloads/Physics/physics.usda"] = f"""#usda 1.0
+(
+    defaultPrim = "RootNode"
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+over "RootNode"
+{{
+    over "Geometry"
+    {{
+{overs}    }}
+
+    def Scope "Joints"
+    {{
+{joints}    }}
+}}
+""".encode()
+    for path, body in files.items():
+        host.pages[f"/datasets/{SimReady.REPO}/resolve/{SimReady.REVISION}/{urllib.parse.quote(f'{ARTICULATED}/{path}')}"] = body
+    return files
+
+
 def importer(host: Host, tmp_path: Path) -> SimReady:
     return SimReady(cache=tmp_path / "cache", provider=HFHub(SimReady.REPO, revision=SimReady.REVISION, host=host.base))
 
@@ -185,6 +279,65 @@ def test_import_builds_the_object_and_keeps_the_simready_metadata_and_physics(bl
     assert sizes
     assert max(max(size) for size in sizes) == 2048
     assert not imp.package(ITEM).exists()
+
+
+def test_link_and_joint_names_drop_the_simready_suffixes():
+    assert [link_name(prim) for prim in ("wheelPin_01_obj_00", "base_01_obj_00", "lid")] == ["wheel_pin_01", "base_01", "lid"]
+    assert [joint_name(prim) for prim in ("joint_wheelPin_01_joint_00", "joint_brake_01_joint_00", "hinge")] == ["wheel_pin_01", "brake_01", "hinge"]
+
+
+def test_stage_writes_no_articulation_for_a_rigid_package(host, tmp_path):
+    package(host)
+    imp = importer(host, tmp_path)
+    imp.fetch(ITEM)
+    source = imp.stage(ITEM, tmp_path / "dataset")
+    assert "articulation" not in yaml.safe_load((source / ANNOTATION_NAME).read_text())
+
+
+def test_stage_writes_the_physics_payload_joints_as_articulation(host, tmp_path):
+    articulated_package(host)
+    imp = importer(host, tmp_path)
+    imp.fetch(ARTICULATED)
+    source = imp.stage(ARTICULATED, tmp_path / "dataset")
+    articulation = yaml.safe_load((source / ANNOTATION_NAME).read_text())["articulation"]
+    assert articulation["links"] == {"base_01": ["base_01_obj_00"], "wheel_pin_01": ["wheelPin_01_obj_00"], "wheel_01": ["wheel_01_obj_00"], "brake_01": ["brake_01_obj_00"], "base_glass_01": ["baseGlass_01_obj_00"]}
+    joints = {joint["name"]: joint for joint in articulation["joints"]}
+    assert {name: (joint["type"], joint["parent"], joint["child"]) for name, joint in joints.items()} == {
+        "wheel_pin_01": ("continuous", "base_01", "wheel_pin_01"),
+        "wheel_01": ("continuous", "wheel_pin_01", "wheel_01"),
+        "brake_01": ("revolute", "base_01", "brake_01"),
+        "base_glass_01": ("fixed", "base_01", "base_glass_01"),
+    }
+    assert joints["wheel_01"]["origin"] == pytest.approx(list(BODIES["wheel_01"]))
+    assert joints["wheel_01"]["axis"] == [0.0, 1.0, 0.0]
+    assert joints["brake_01"]["limit"] == pytest.approx([0.0, 0.523599])
+    assert "states" not in articulation
+
+
+def test_staged_package_loads_with_every_link_node_in_blender(blender_python, host, tmp_path):
+    articulated_package(host)
+    imp = importer(host, tmp_path)
+    imp.fetch(ARTICULATED)
+    source = imp.stage(ARTICULATED, tmp_path / "dataset")
+    articulation = yaml.safe_load((source / ANNOTATION_NAME).read_text())["articulation"]
+    objects = scene(blender_python, source / Path(ROOT).name.replace(ITEM, ARTICULATED))
+    assert unmatched(objects, articulation) == []
+    assert owners(objects, articulation) == {f"{name}_mesh_00": link_name(f"{name}_obj_00") for name in BODIES}
+
+
+@pytest.mark.network
+def test_live_hospital_bed_keeps_its_ten_joints_and_loads_them_in_blender(blender_python, tmp_path):
+    item = "bed_hospital_standard_a01"
+    imp = SimReady(cache=tmp_path / "cache")
+    imp.fetch(item)
+    source = imp.stage(item, tmp_path / "dataset")
+    articulation = yaml.safe_load((source / ANNOTATION_NAME).read_text())["articulation"]
+    kinds = sorted(joint["type"] for joint in articulation["joints"])
+    assert kinds == ["continuous"] * 8 + ["fixed", "revolute"]
+    assert sorted(articulation["links"]) == ["base_01", "base_glass_01", "brake_01", *(f"wheel_0{n}" for n in range(1, 5)), *(f"wheel_pin_0{n}" for n in range(1, 5))]
+    objects = scene(blender_python, source / imp.root(item).name)
+    assert unmatched(objects, articulation) == []
+    assert set(owners(objects, articulation).values()) == set(articulation["links"])
 
 
 @pytest.mark.network

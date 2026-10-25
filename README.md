@@ -91,6 +91,37 @@ arena-assets semantic seats apply seats.yaml ./dataset [--overwrite]
 
 `propose` first asks which objects are for sitting, by asset path and description in batches of 50, unless `--only` names the assets. For each of them it sends the top-down and perspective previews of a build with `-o previews` and the worked example [seats_example.yaml](src/arena_assets/semantic/seats_example.yaml), asks `--samples` times (default 3) and keeps the slot count most answers agree on, the median box of matched slots and the facings most answers name. The example object is asked without its own example. It prints the tokens used and merges each object's proposal into `--out` as soon as it has it, keeping the objects already there. It stops at the first object whose samples all fail, the proposals so far kept. `apply` writes reviewed proposals into the source annotations, skipping objects that already have `sit` slots unless `--overwrite`, with which an empty list removes them. It checks every proposal before writing any file.
 
+### Object articulation
+
+An object's `annotation.yaml` may carry `articulation:`, the links of its meshes, the joints between them and named joint states. `links` maps each link name to the source nodes whose meshes it takes, and a link may list no node (the intermediate link of a joint with two degrees of freedom). A joint has a `name`, a `type` (`revolute`, `prismatic`, `continuous` or `fixed`), a `parent` and a `child` link, an `origin` point and a unit `axis`, a `limit` `[lower, upper]` for revolute (radians) and prismatic (meters) joints and an optional `velocity` (rad/s or m/s). `states` maps a state name to the values of some joints. The links form one tree under the root link, the one no joint has as its child.
+
+```yaml
+articulation:
+  links:
+    cabinet: [body]
+    door: [door]
+    drawer: [drawer_front, drawer_box]
+  joints:
+    - {name: hinge, type: revolute, parent: cabinet, child: door, origin: [0.45, -0.3, 0.0], axis: [0, 0, 1], limit: [0.0, 1.6]}
+    - {name: slide, type: prismatic, parent: cabinet, child: drawer, axis: [0, -1, 0], limit: [0.0, 0.35], velocity: 0.2}
+  states:
+    closed: {hinge: 0.0, slide: 0.0}
+    open: {hinge: 1.6, slide: 0.35}
+```
+
+The modeled mesh is the object at all joint values 0, where every link frame coincides with the model frame. In a build dataset, `origin` and `axis` are in the frame of the source model in meters, Z up, as for `collider:`, and the build moves them with the model when it stands the model upright on the floor, so the built annotation holds them in the frame of the built model. The articulation parses with `arena_simulation_setup.utils.articulation`, which the Arena workspace provides, and an articulation that does not parse keeps the object out of the build with the reason.
+
+A mesh object of the model belongs to the link whose nodes name it or its nearest listed ancestor, both compared without Blender's duplicate suffix such as `.001`, and the root link takes every mesh no link claims. A USD source of an articulated object loads with every Xform kept as an object of its own, so an Xform holding a single mesh is a node under its own name. A listed node that matches no object fails the build of that object with the missing nodes and the objects the model has.
+
+Next to the whole models at rest, which stay as without an articulation, the build writes:
+
+- `links/<link>/` for every link with meshes: a static object bundle in the build's formats plus `obj` (`<link>.usdz`, `<link>.sdf/<link>.sdf`, `<link>.obj/<link>.obj`, ...), its geometry in the frame of the built model, and an `annotation.yaml` with the link's `name`, `path` and `bounding_box`. Its USD meshes get the static triangle-mesh collision the object's have, and an object `collider:` is not baked into links.
+- `<name>.urdf`: one URDF link per articulation link, each link frame at its parent joint, visual and collision meshes `links/<link>/<link>.obj/<link>.obj` offset back into the model frame, a 1 kg inertia of the link's box, and a `<limit>` with the joint's velocity on revolute and prismatic joints.
+- `<name>.articulated.usda`: a Z-up meters stage whose default prim `/<name>` is the articulation root, one rigid body Xform of 1 kg per link referencing the link's USD model (links without meshes are empty Xforms), a fixed joint from the world to the root link, and per joint a `PhysicsRevoluteJoint` (also for continuous joints, without limits), `PhysicsPrismaticJoint` or `PhysicsFixedJoint` between the parent and child link with the joint axis as its X axis, limits in degrees or meters. The build writes it when it exports a USD format.
+- `swept` in the built `articulation:`, the box `[[x_min, x_max], [y_min, y_max], [z_min, z_max]]` the links cover over every reachable joint value. `bounding_box` stays the box at rest.
+
+The database stores `articulated` for every object and the articulation as JSON for an articulated one. `--overwrite annotations` keeps the articulation of the last build, since a changed articulation changes the exported links, and warns that a source articulation the last build lacks needs a model build.
+
 ### Sound assets
 
 A sound asset is a directory `Sound/<Name>/` holding its wav files and a `<Name>.yaml` manifest (version 2: `kind`, `level_db`, `loop`, `variants`, optional `desc` and `tags`). The manifest is the only annotation source: the build derives `annotation.yaml` from it (tags are the manifest tags, every variant's tags, and `kind::<kind>`, stamped with the ASA revision) and fails on a manifest with the wrong version or without `kind`, `level_db` or `variants`.

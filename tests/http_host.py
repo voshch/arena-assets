@@ -6,6 +6,7 @@ class Host(http.server.ThreadingHTTPServer):
         super().__init__(("127.0.0.1", 0), Handler)
         self.pages: dict[str, bytes] = {}
         self.redirects: dict[str, str] = {}
+        self.statuses: dict[str, int] = {}
         self.served: list[str] = []
         self.authorizations: dict[str, str | None] = {}
 
@@ -20,6 +21,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         self.server.served.append(self.path)
         self.server.authorizations[self.path] = self.headers.get("Authorization")
+        if self.path in self.server.statuses:
+            self.send_error(self.server.statuses[self.path])
+            return
         if self.path in self.server.redirects:
             self.send_response(302)
             self.send_header("Location", self.server.redirects[self.path])

@@ -17,14 +17,16 @@ from cattrs.gen import make_dict_structure_fn, make_dict_unstructure_fn, overrid
 
 from arena_assets import semantic
 from arena_assets.impl import ANNOTATION_NAME, AssetType, Face, SpatialAnnotation, collider, converter
+from arena_assets.impl import articulation as link_bundles
 from arena_assets.impl.affordance import Affordances, structure_affordances, unstructure_affordances
+from arena_assets.impl.articulation import Articulation, ArticulationError, structure_articulation, unstructure_articulation
 from arena_assets.utils import ModelConverter
 from arena_assets.utils.affordance import SEAT_FALLBACK, SEAT_SIZE, largest_seat, surface_z
 from arena_assets.utils.geom import BoundingBox
 from arena_assets.utils.logging import get_logger
 from arena_assets.utils.mesh_io import read_mesh
 from arena_assets.utils.texture import MAX_TEXTURE_PX
-from arena_assets.utils.ModelConverter import BlenderWorker
+from arena_assets.utils.ModelConverter import BlenderError, BlenderWorker, Result
 from arena_assets.utils.ModelConverter.lights import DEFAULT_CCT_K, Quaternion, SourceLight, SourceMaterial, Vector3, color_temperature, nearest_material
 from arena_assets.utils.ModelConverter.UsdBaker import UsdBaker
 
@@ -32,6 +34,7 @@ from . import DatabaseBuilder, OptionRegistry, OverwriteMode
 
 if typing.TYPE_CHECKING:
     from arena_simulation_setup.utils.affordance import AffordanceKind, AffordanceSlot, Box, Footprint, Slot
+    from arena_simulation_setup.utils.articulation import Box as LinkBox
 
 logger = get_logger("build.object")
 
@@ -220,6 +223,7 @@ class ObjectAnnotation(SpatialAnnotation):
     lights: list[ObjectLight] = attrs.field(factory=list, converter=_structure_lights, validator=_unique_names)
     collider: str = ""
     affordances: Affordances = attrs.field(factory=dict, converter=structure_affordances)
+    articulation: Articulation | None = attrs.field(default=None, converter=structure_articulation)
 
     def query_affordance(self, kind: AffordanceKind | str, slot: int = 0) -> AffordanceSlot:
         from arena_simulation_setup.utils.affordance import affordance_kind
@@ -250,6 +254,9 @@ class ObjectAnnotation(SpatialAnnotation):
             metadata["collider"] = self.collider
         if self.affordances:
             metadata["affordances"] = json.dumps(unstructure_affordances(self.affordances))
+        metadata["articulated"] = self.articulation is not None
+        if self.articulation is not None:
+            metadata["articulation"] = json.dumps(unstructure_articulation(self.articulation))
         return metadata
 
     @classmethod
@@ -265,6 +272,13 @@ class ObjectAnnotation(SpatialAnnotation):
                 if e.name != "arena_simulation_setup":
                     raise
                 logger.debug("%s keeps no affordances, reading them needs arena_simulation_setup", annotation.path)
+        if articulation := metadata.get("articulation"):
+            try:
+                annotation.articulation = json.loads(articulation)
+            except ModuleNotFoundError as e:
+                if e.name != "arena_simulation_setup":
+                    raise
+                logger.debug("%s keeps no articulation, reading it needs arena_simulation_setup", annotation.path)
         return annotation
 
     @property
@@ -320,7 +334,10 @@ def _structure_light(value: typing.Any, _: type) -> ObjectLight:
 converter.register_structure_hook(ObjectLight, _structure_light)
 converter.register_unstructure_hook(ObjectLight, make_dict_unstructure_fn(ObjectLight, converter, cone_deg=override(omit_if_default=True), glow=override(omit_if_default=True)))
 converter.register_structure_hook(ObjectAnnotation, make_dict_structure_fn(ObjectAnnotation, converter, _cattrs_detailed_validation=False))
-converter.register_unstructure_hook(ObjectAnnotation, make_dict_unstructure_fn(ObjectAnnotation, converter, lights=override(omit_if_default=True), collider=override(omit_if_default=True), affordances=override(omit_if_default=True, unstruct_hook=unstructure_affordances)))
+converter.register_unstructure_hook(
+    ObjectAnnotation,
+    make_dict_unstructure_fn(ObjectAnnotation, converter, lights=override(omit_if_default=True), collider=override(omit_if_default=True), affordances=override(omit_if_default=True, unstruct_hook=unstructure_affordances), articulation=override(omit_if_default=True, unstruct_hook=unstructure_articulation)),
+)
 
 
 class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
@@ -375,8 +392,20 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
             annotation.affordances = place_slots(annotation, points, triangles, bounding_box, recompute=self._recompute_affordances)
             logger.info("Placed the affordance slots of %s on %s", annotation.path, model)
 
+        def carry_articulation(annotation: ObjectAnnotation) -> None:
+            built = self.output_path / annotation.path / ANNOTATION_NAME
+            try:
+                previous = structure_articulation((yaml.safe_load(built.read_text()) or {}).get("articulation")) if built.is_file() else None
+            except ValueError as e:
+                logger.warning("%s drops the articulation of its last build, which does not parse (%s), run a model build", annotation.path, e)
+                previous = None
+            if annotation.articulation is not None and previous is None:
+                logger.warning("%s has an articulation its last build lacks, run a model build to export its links", annotation.path)
+            annotation.articulation = previous
+
         if self._overwrite == OverwriteMode.ANNOTATIONS_ONLY:
             self._pipeline.insert(0, carry_affordances)
+            self._pipeline.insert(0, carry_articulation)
 
         self._previews_enabled = False
         self._max_texture = MAX_TEXTURE_PX
@@ -410,6 +439,7 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
                 return None
 
             input_file = Path(annotation.path) / main_file
+            link_bundles.clear(dest, annotation.name)
 
             if self._usd_baker is not None and self.is_usd(main_file):
                 baked_usd_path = dest / "build" / f"{annotation.name}.fbx"
@@ -424,9 +454,11 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
 
             textures = Path(tempfile.mkdtemp(prefix=".textures-", dir=dest))
             try:
-                scan = self._blender.run([("load", str(input_file)), ("rectify",), ("bounding_box",), ("lights",), ("remove_lights",), ("emissive_materials",), *([("triangles",)] if annotation.affordances else [])], keep=True)
+                load_options = [{"merge_parent_xform": False}] if annotation.articulation is not None and self.is_usd(input_file.name) else []
+                scan = self._blender.run([("load", str(input_file), *load_options), ("rectify",), ("bounding_box",), ("lights",), ("remove_lights",), ("emissive_materials",), *([("triangles",)] if annotation.affordances else [])], keep=True)
                 try:
                     rectified = np.array(scan.values[1])
+                    articulation = self._built_articulation(annotation, rectified)
                     bounding_box = BoundingBox(scan.values[2]).round(4)
                     extracted = object_lights([SourceLight(**{key: tuple(value) if isinstance(value, list) else value for key, value in light.items()}) for light in scan.values[3]], [SourceMaterial(name=material["name"], center=tuple(material["center"])) for material in scan.values[5]])
                     steps: list[tuple] = [("prepare_glow", [light.glow for light in annotation.lights or extracted if light.glow is not None])]
@@ -442,7 +474,8 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
                 except Exception:
                     self._blender.run([])
                     raise
-                result = self._blender.run(steps)
+                result = self._blender.run(steps, keep=articulation is not None)
+                link_boxes, link_runs = self._export_links(articulation, dest) if articulation is not None else ({}, [])
             finally:
                 shutil.rmtree(textures, ignore_errors=True)
             if self._max_texture > 0:
@@ -450,12 +483,13 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
                     logger.info("Texture %s of %s: %dx%d to %dx%d", limit["name"], annotation.path, limit["width"], limit["height"], limit["new_width"], limit["new_height"])
 
             logger.info("Processed model %s", annotation.path)
-            for line in (scan.stdout + result.stdout).splitlines():
+            runs = [scan, result, *link_runs]
+            for line in "".join(run.stdout for run in runs).splitlines():
                 if line.startswith("Warning:"):
                     logger.warning("ModelConverter: %s", line)
                 else:
                     logger.info("ModelConverter: %s", line)
-            for line in (scan.stderr + result.stderr).splitlines():
+            for line in "".join(run.stderr for run in runs).splitlines():
                 logger.warning("ModelConverter: %s", line)
 
             annotation.bounding_box = bounding_box
@@ -474,7 +508,19 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
             else:
                 annotation.lights = extracted
 
+            if articulation is not None:
+                written = link_bundles.finish(dest, annotation.name, self._target_path(annotation).as_posix(), articulation, link_boxes)
+                try:
+                    annotation.articulation = attrs.evolve(articulation, swept=articulation.sweep(link_boxes))
+                except ValueError as e:
+                    raise ArticulationError(str(e)) from None
+                logger.info("Exported %d links of %s with %s", len(link_boxes), annotation.path, ", ".join(path.name for path in written))
+
             return annotation
+
+        except ArticulationError as e:
+            logger.error("Cannot build %s: %s", annotation.path, e)
+            return None
 
         except Exception as e:
             logger.error("Unexpected error processing entity %s: %s", annotation.path, repr(e))
@@ -493,6 +539,32 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
                         baked_usd_path,
                         e,
                     )
+
+    @staticmethod
+    def _built_articulation(annotation: ObjectAnnotation, rectified: np.ndarray) -> Articulation | None:
+        """The source articulation carried into the built frame."""
+        if annotation.articulation is None:
+            return None
+        try:
+            return annotation.articulation.transformed(rectified)
+        except ValueError as e:
+            raise ArticulationError(str(e)) from None
+
+    def _export_links(self, articulation: Articulation, dest: Path) -> tuple[dict[str, LinkBox], list[Result]]:
+        """Split the kept scene into the articulation's links and save each link with meshes as its own bundle, return the link boxes and the worker runs."""
+        try:
+            split = self._blender.run([("split_links", articulation.links, articulation.root), ("link_bounding_boxes",)], keep=True)
+        except BlenderError as e:
+            raise ArticulationError(f"its articulation does not fit the model: {str(e).splitlines()[0]}") from None
+        try:
+            boxes: dict[str, LinkBox] = {record["link"]: BoundingBox(record["bounding_box"]).round(4) for record in split.values[1]}
+            for link in boxes:
+                link_bundles.link_dir(dest, link).mkdir(parents=True, exist_ok=True)
+        except Exception:
+            self._blender.run([])
+            raise
+        saved = self._blender.run([("save_link", link, str(link_bundles.link_dir(dest, link) / f"{link}.{ext}")) for link in boxes for ext in link_bundles.link_formats(self._formats)])
+        return boxes, [split, saved]
 
     enable = OptionRegistry()
 

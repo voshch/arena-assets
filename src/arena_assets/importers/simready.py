@@ -1,4 +1,4 @@
-"""NVIDIA SimReady assets from Hugging Face, built into Common/Object items with their SimReady metadata and physics payloads kept beside."""
+"""NVIDIA SimReady assets from Hugging Face, built into Common/Object items with their joints as articulation and their SimReady metadata and physics payloads kept beside."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from pathlib import Path
 from arena_assets.impl import ANNOTATION_NAME, AssetType
 from arena_assets.impl.build import DatabaseBuilder, OverwriteMode, replacing
 from arena_assets.importers import IMPORTERS, Attribution, Importer
+from arena_assets.importers.articulated import slug, usd_articulation, write_articulation
 from arena_assets.importers.gso import annotate
 from arena_assets.importers.providers import HFHub, Provider
 from arena_assets.utils.logging import get_logger
@@ -31,6 +32,8 @@ MAX_FOOTPRINT_M = 5.0
 
 _WORD_START = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _VARIANT = re.compile(r"^[a-z]\d{2}$")
+_BODY = re.compile(r"_obj_\d+$")
+_JOINT = re.compile(r"^joint_(.+)_joint_\d+$")
 
 logger = get_logger("import.simready")
 
@@ -43,6 +46,17 @@ def description(item: str) -> str:
 
 def kind(item: str) -> str:
     return _WORD_START.sub("_", item.split("_")[0]).lower()
+
+
+def link_name(prim: str) -> str:
+    """Link of a SimReady body prim, `wheelPin_01_obj_00` as `wheel_pin_01`."""
+    return slug(_BODY.sub("", prim))
+
+
+def joint_name(prim: str) -> str:
+    """Joint of a SimReady joint prim, `joint_wheelPin_01_joint_00` as `wheel_pin_01`."""
+    match = _JOINT.match(prim)
+    return slug(match[1] if match else prim)
 
 
 def footprint(root: Path) -> tuple[float, float, float]:
@@ -124,9 +138,7 @@ class SimReady(Importer):
         dataset = Path(tempfile.mkdtemp(prefix="stage-", dir=self.cache))
         try:
             with replacing(target):
-                source = dataset / DOMAIN / ASSET_TYPE / item
-                shutil.copytree(root.parent, source)
-                annotate(source / ANNOTATION_NAME, item, description(item), [ORIGIN, kind(item)], kind(item))
+                self.stage(item, dataset)
                 builder = DatabaseBuilder.Builder(AssetType.OBJECT)(input_path=dataset / DOMAIN, output_path=out / DOMAIN, overwrite=OverwriteMode.OVERWRITE)
                 builder.enable("formats", FORMATS)
                 builder.enable("previews")
@@ -137,6 +149,15 @@ class SimReady(Importer):
         finally:
             shutil.rmtree(dataset)
         return str(Path(DOMAIN) / ASSET_TYPE / item)
+
+    def stage(self, item: str, dataset: Path) -> Path:
+        """Lay a downloaded package out as builder input under dataset, its joints as articulation, and return its directory."""
+        root = self.root(item)
+        source = dataset / DOMAIN / ASSET_TYPE / item
+        shutil.copytree(root.parent, source)
+        annotate(source / ANNOTATION_NAME, item, description(item), [ORIGIN, kind(item)], kind(item))
+        write_articulation(source / ANNOTATION_NAME, usd_articulation(source / root.name, link_name, joint_name))
+        return source
 
     @staticmethod
     def keep(package: Path, usd: Path, kept: Path) -> None:

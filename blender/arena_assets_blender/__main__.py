@@ -6,7 +6,7 @@ import typing
 
 import numpy
 
-OPERATIONS = ("load", "rectify", "bounding_box", "lights", "remove_lights", "emissive_materials", "triangles", "limit_textures", "prepare_glow", "bind_uv_maps", "render_perspective", "render_topdown", "save")
+OPERATIONS = ("load", "rectify", "bounding_box", "lights", "remove_lights", "emissive_materials", "triangles", "limit_textures", "prepare_glow", "bind_uv_maps", "render_perspective", "render_topdown", "save", "split_links", "link_bounding_boxes", "save_link")
 
 
 def convert(*args: str) -> None:

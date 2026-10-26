@@ -192,10 +192,10 @@ def test_source_listing_json_gives_the_items_and_the_target(tmp_path):
 
 @pytest.mark.network
 def test_a_gated_listing_is_a_one_line_error(tmp_path):
-    from arena_assets.importers.artiverse import ARCHIVE, REPO, Artiverse
+    from arena_assets.importers.artiverse import RELEASES, REPO, Artiverse
 
     try:
-        Artiverse(cache=tmp_path / "probe").provider.size(ARCHIVE)
+        Artiverse(cache=tmp_path / "probe").provider.size(RELEASES)
     except urllib.error.HTTPError as error:
         if error.code not in (401, 403):
             raise

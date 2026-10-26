@@ -28,6 +28,7 @@ ARTICULATION = {
         {"name": "mount", "type": "fixed", "parent": "cabinet", "child": "plate", "origin": [0.0, 0.0, 2.0]},
     ],
     "states": {"closed": {"hinge": 0.0, "slide": 0.0}, "open": {"hinge": 1.5, "slide": 0.3}},
+    "detents": {"hinge": {"ajar": 0.4}, "slide": {"half": 0.15}},
 }
 LIFT = np.array([0.0, 0.0, -1.0])
 BUILT_BOXES = {
@@ -144,11 +145,24 @@ def test_build_carries_the_articulation_into_the_built_frame(built_cabinet):
         assert list(joints[joint.name].origin) == pytest.approx(list(np.array(list(joint.origin)) + LIFT), abs=1e-6)
         assert list(joints[joint.name].axis) == pytest.approx(list(joint.axis), abs=1e-6)
     assert built.articulation.states == source.states
+    assert built.articulation.detents == source.detents
     assert built.articulation.links == source.links
     swept = built.articulation.swept
     assert swept == built.articulation.sweep(BUILT_BOXES)
     assert all(low <= rest_low and high >= rest_high for (low, high), (rest_low, rest_high) in zip(swept, built.bounding_box, strict=True))
     assert swept[0][1] >= 1.2
+
+
+def test_built_articulation_scales_prismatic_detents_with_the_model():
+    from arena_assets.impl.build.ObjectDatabaseBuilder import ObjectAnnotation, ObjectDatabaseBuilder
+
+    rectified = np.diag([0.01, 0.01, 0.01, 1.0])
+    rectified[:3, 3] = LIFT
+    built = ObjectDatabaseBuilder._built_articulation(ObjectAnnotation(name="cabinet", path="Object/cabinet", articulation=ARTICULATION), rectified)
+    assert built is not None
+    assert built.detents["slide"] == pytest.approx({"half": 0.0015})
+    assert built.detents["hinge"] == {"ajar": 0.4}
+    assert built.fields({"slide": 0.0015})[1]["setting.slide"] == "half"
 
 
 def test_build_writes_a_loadable_bundle_per_link_with_meshes(built_cabinet):

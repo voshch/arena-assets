@@ -128,7 +128,7 @@ def reaching(edge: Edge) -> tuple[float, float] | None:
 
 def assemble(bodies: Mapping[str, Body], edges: Sequence[Edge], root: str, lower_closed: bool = False) -> Articulation | None:
     """The link tree grown from root, unreached bodies fixed to root, None when no joint moves."""
-    from arena_simulation_setup.utils.articulation import Articulation, Joint
+    from arena_simulation_setup.utils.articulation import RESERVED_STATES, Articulation, Joint
 
     taken: set[str] = set()
     names = {key: unique(slug(bodies[key].link), taken) for key in [root, *(key for key in bodies if key != root)]}
@@ -163,7 +163,7 @@ def assemble(bodies: Mapping[str, Body], edges: Sequence[Edge], root: str, lower
             tree.append(Edge(name=f"{names[key]}_fixed", type="fixed", parent=root, child=key))
             reached.add(key)
             grow(key)
-    joint_names: set[str] = set()
+    joint_names: set[str] = set(RESERVED_STATES)
     joints = [
         Joint(
             name=unique(slug(edge.name), joint_names),

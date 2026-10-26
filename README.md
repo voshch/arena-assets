@@ -97,7 +97,7 @@ arena-assets semantic seats apply seats.yaml ./dataset [--overwrite]
 
 ### Object articulation
 
-An object's `annotation.yaml` may carry `articulation:`, the links of its meshes, the joints between them and named joint states. `links` maps each link name to the source nodes whose meshes it takes, and a link may list no node (the intermediate link of a joint with two degrees of freedom). A joint has a `name`, a `type` (`revolute`, `prismatic`, `continuous` or `fixed`), a `parent` and a `child` link, an `origin` point and a unit `axis`, a `limit` `[lower, upper]` for revolute (radians) and prismatic (meters) joints and an optional `velocity` (rad/s or m/s). `states` maps a state name to the values of some joints. The links form one tree under the root link, the one no joint has as its child.
+An object's `annotation.yaml` may carry `articulation:`, the links of its meshes, the joints between them and named joint states. `links` maps each link name to the source nodes whose meshes it takes, and a link may list no node (the intermediate link of a joint with two degrees of freedom). A joint has a `name`, a `type` (`revolute`, `prismatic`, `continuous` or `fixed`), a `parent` and a `child` link, an `origin` point and a unit `axis`, a `limit` `[lower, upper]` for revolute (radians) and prismatic (meters) joints and an optional `velocity` (rad/s or m/s). `states` maps a state name to the values of some joints. The links form one tree under the root link, the one no joint has as its child. `detents` names positions of single joints, `<joint>: {<name>: <value>}` with each value inside the joint's limit, such as the clicks of a dial, read and written at runtime as the joint's `setting.` field, and the build scales prismatic ones with the model like the states. State, joint and detent names avoid the runtime's field names `state`, `target`, `moving`, `blocked`, `openness`, `pos`, `angle`, `setting` and `q`.
 
 ```yaml
 articulation:
@@ -111,6 +111,8 @@ articulation:
   states:
     closed: {hinge: 0.0, slide: 0.0}
     open: {hinge: 1.6, slide: 0.35}
+  detents:
+    hinge: {ajar: 0.4}
 ```
 
 The modeled mesh is the object at all joint values 0, where every link frame coincides with the model frame. In a build dataset, `origin` and `axis` are in the frame of the source model in meters, Z up, as for `collider:`, and the build moves them with the model when it stands the model upright on the floor, so the built annotation holds them in the frame of the built model. The articulation parses with `arena_simulation_setup.utils.articulation`, which the Arena workspace provides, and an articulation that does not parse keeps the object out of the build with the reason.
@@ -283,3 +285,6 @@ pre-commit install
 pytest tests/
 ruff check . && ruff format src
 ```
+
+`pytest tests/` leaves out the tests marked `network`, which reach the upstream hosts of the
+importers. `pytest -m network tests/` runs them.

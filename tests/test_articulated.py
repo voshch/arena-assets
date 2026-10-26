@@ -106,6 +106,13 @@ def test_assemble_widens_a_limit_that_excludes_the_modeled_pose(caplog):
     assert "joint door_hinge has the limit [-3.14159, -1.22173] that excludes its modeled pose" in caplog.text
 
 
+def test_assemble_renames_a_joint_named_like_a_reserved_field():
+    bodies = {key: Body(link=key) for key in ("body", "dial")}
+    articulation = assemble(bodies, [Edge(name="Angle", type="continuous", parent="body", child="dial")], "body")
+    assert articulation is not None
+    assert [joint.name for joint in articulation.joints] == ["angle_2"]
+
+
 def test_assemble_keeps_a_tree_hangs_loose_bodies_fixed_and_drops_loops(caplog):
     bodies = {key: Body(link=key) for key in ("a", "b", "c", "d")}
     edges = [Edge(name="ab", type="continuous", parent="a", child="b"), Edge(name="bc", type="fixed", parent="b", child="c"), Edge(name="ca", type="fixed", parent="c", child="a")]

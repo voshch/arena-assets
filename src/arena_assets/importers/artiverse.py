@@ -196,7 +196,7 @@ def part_edges(link: str, parent: str, child: str, entries: Sequence[Entry], bod
 
 
 def motion_states(entries: Iterable[Entry], joint_of: Mapping[int, str], articulation: Articulation) -> dict[str, dict[str, float]]:
-    """Named states the annotation gives single-joint parts in `motionStates`, the values inside each joint's limit."""
+    """Named per-joint values the annotation gives single-joint parts in `motionStates`, the values inside each joint's limit."""
     joints = articulation.joint_map
     states: dict[str, dict[str, float]] = collections.defaultdict(dict)
     for entry in entries:
@@ -253,10 +253,14 @@ def artiverse_articulation(document: Mapping[str, typing.Any], joints: Mapping[s
     if articulation is None:
         return None
     states = {state: dict(values) for state, values in articulation.states.items()}
-    for state, values in motion_states(listed, single, articulation).items():
-        if state not in RESERVED_STATES and state not in articulation.joint_map:
-            states.setdefault(state, {}).update(values)
-    return Articulation(links=articulation.links, joints=articulation.joints, states=states)
+    detents: dict[str, dict[str, float]] = collections.defaultdict(dict)
+    for name, values in motion_states(listed, single, articulation).items():
+        if name in ("closed", "open"):
+            states.setdefault(name, {}).update(values)
+        elif name not in RESERVED_STATES:
+            for joint, value in values.items():
+                detents[joint][name] = value
+    return Articulation(links=articulation.links, joints=articulation.joints, states=states, detents=dict(detents))
 
 
 def release_chunks(releases: Mapping[str, typing.Any], manifests: Mapping[str, Mapping[str, typing.Any]]) -> list[tuple[str, list[str]]]:

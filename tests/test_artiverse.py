@@ -102,7 +102,15 @@ def test_parts_become_links_with_their_joints_in_the_z_up_model_frame(tmp_path):
     first, second = joints["lamp_arm_6_axis1"], joints["lamp_arm_6_axis2"]
     assert (list(first.axis), list(first.origin), first.limit) == ([1.0, 0.0, 0.0], [0.0, 0.0, 0.5], (-0.5, 0.5))
     assert (list(second.axis), list(second.origin), second.limit) == ([0.0, -1.0, 0.0], [0.0, 0.0, 0.5], (-0.2, 0.2))
-    assert articulation.states == {"closed": {"door_2": 0.0, "drawer_3": 0.0}, "open": {"door_2": 1.5, "drawer_3": 0.3}, "ajar": {"door_2": 0.4}}
+    assert articulation.states == {"closed": {"door_2": 0.0, "drawer_3": 0.0}, "open": {"door_2": 1.5, "drawer_3": 0.3}}
+    assert articulation.detents == {"door_2": {"ajar": 0.4}}
+
+
+def test_motion_states_besides_closed_and_open_become_detents_unless_reserved(tmp_path):
+    entries = [{**entry, "motionStates": {**entry["motionStates"], "Setting": {"value": 0.2}, "Half Open": {"value": 0.7}}} if entry["pid"] == 2 else entry for entry in JOINT_ENTRIES]
+    articulation = artiverse_articulation(segmented_glb(tmp_path / "item.glb"), {"articulations": entries})
+    assert articulation is not None
+    assert articulation.detents == {"door_2": {"ajar": 0.4, "half_open": 0.7}}
 
 
 def test_without_motion_states_doors_and_drawers_open_at_their_limits(tmp_path):
@@ -110,6 +118,7 @@ def test_without_motion_states_doors_and_drawers_open_at_their_limits(tmp_path):
     articulation = artiverse_articulation(segmented_glb(tmp_path / "item.glb"), {"annotation": {"articulations": entries}})
     assert articulation is not None
     assert articulation.states == {"closed": {"door_2": 0.0, "drawer_3": 0.0}, "open": {"door_2": 1.5, "drawer_3": 0.3}}
+    assert articulation.detents == {}
 
 
 def test_moving_top_part_hangs_on_a_base_link_and_unknown_types_are_refused(tmp_path):

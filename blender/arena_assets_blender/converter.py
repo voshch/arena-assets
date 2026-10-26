@@ -22,7 +22,7 @@ from .CoordinateSystem import CoordinateSystem
 from .geom import BoundingBox
 from .io_utils import capture_all_output
 from .lights import SourceLight, SourceMaterial, UsdLight, matching_prim
-from .links import LinkBox, LinkObjects, base_name, link_of, node_links
+from .links import LinkBox, LinkObjects, Side, base_name, link_of, node_links
 from .textures import TextureLimit, limited
 
 logger = logging.getLogger("ModelConverter")
@@ -150,6 +150,12 @@ def _usd_light(light: SourceLight, prim: UsdLight, scale: mathutils.Vector) -> S
         face_area=face,
         cct_K=prim.cct_K,
     )
+
+
+def _extent(points: list[mathutils.Vector]) -> tuple[Side, Side, Side]:
+    """Axis-aligned low and high of points per axis."""
+    xs, ys, zs = zip(*points, strict=True)
+    return (min(xs), max(xs)), (min(ys), max(ys)), (min(zs), max(zs))
 
 
 def _unparent(obj: bpy.types.Object) -> None:
@@ -518,7 +524,7 @@ class ModelConverter:
         for obj in bpy.context.scene.objects:
             if obj.type == "MESH" and obj.name in self._links:
                 corners.setdefault(self._links[obj.name], []).extend(obj.matrix_world @ mathutils.Vector(corner) for corner in obj.bound_box)
-        return [LinkBox(link=link, bounding_box=tuple((min(axis), max(axis)) for axis in zip(*points, strict=True))) for link, points in corners.items()]
+        return [LinkBox(link=link, bounding_box=_extent(points)) for link, points in corners.items()]
 
     def save_link(self, link: str, path: str) -> None:
         """Save only the meshes of one link, every other object out of the scene for the export and back afterwards."""

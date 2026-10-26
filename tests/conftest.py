@@ -8,9 +8,17 @@ import pytest
 from arena_assets.impl import DATABASE_NAME, Annotation
 from arena_assets.impl.build.ObjectDatabaseBuilder import ObjectAnnotation
 from arena_assets.utils.Database import Database
+from arena_assets.utils import logging as assets_logging
 from arena_assets.utils.geom import BoundingBox
 from arena_assets.utils.ModelConverter import BlenderUnavailable, command, environment
 from http_host import Host
+
+
+@pytest.fixture(autouse=True)
+def _rebind_logging_to_stderr():
+    yield
+    assets_logging.initialize()
+
 
 MATERIALS = [
     Annotation(

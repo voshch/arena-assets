@@ -95,15 +95,29 @@ def test_opening_states_close_doors_and_drawers_at_the_modeled_pose():
     assert opening_states(joints, labels, lower_closed=True) == {"closed": {"door": -1.5, "drawer": 0.0, "lid": -0.5, "sash": 0.0}, "open": {"door": 0.0, "drawer": 0.3, "lid": 0.5, "sash": 0.4}}
 
 
-def test_assemble_widens_a_limit_that_excludes_the_modeled_pose(caplog):
+def test_assemble_turns_a_revolute_limit_half_a_turn_off_back_onto_the_modeled_pose(caplog):
     bodies = {key: Body(link=key) for key in ("body", "door")}
     edges = [Edge(name="door_hinge", type="revolute", parent="body", child="door", limit=(-3.141593, -1.22173))]
     with caplog.at_level(logging.WARNING):
         articulation = assemble(bodies, edges, "body")
     assert articulation is not None
-    assert articulation.joints[0].limit == pytest.approx((-3.141593, 0.0))
-    assert articulation.states == {"closed": {"door_hinge": 0.0}, "open": {"door_hinge": pytest.approx(-3.141593)}}
-    assert "joint door_hinge has the limit [-3.14159, -1.22173] that excludes its modeled pose" in caplog.text
+    assert articulation.joints[0].limit == (0.0, pytest.approx(math.pi - 1.22173, abs=1e-5))
+    assert articulation.states == {"closed": {"door_hinge": 0.0}, "open": {"door_hinge": pytest.approx(math.pi - 1.22173, abs=1e-5)}}
+    assert "joint door_hinge has the limit [-3.14159, -1.22173] that excludes its modeled pose, it is turned by 3.14159" in caplog.text
+
+
+def test_assemble_widens_a_limit_that_excludes_the_modeled_pose(caplog):
+    bodies = {key: Body(link=key) for key in ("body", "door", "drawer")}
+    edges = [
+        Edge(name="door_hinge", type="revolute", parent="body", child="door", limit=(0.5, 1.5)),
+        Edge(name="drawer_slide", type="prismatic", parent="body", child="drawer", limit=(-0.4, -0.1)),
+    ]
+    with caplog.at_level(logging.WARNING):
+        articulation = assemble(bodies, edges, "body")
+    assert articulation is not None
+    assert [joint.limit for joint in articulation.joints] == [(0.0, 1.5), (-0.4, 0.0)]
+    assert "joint door_hinge has the limit [0.5, 1.5] that excludes its modeled pose, it is widened to reach 0" in caplog.text
+    assert "joint drawer_slide has the limit [-0.4, -0.1] that excludes its modeled pose, it is widened to reach 0" in caplog.text
 
 
 def test_assemble_renames_a_joint_named_like_a_reserved_field():

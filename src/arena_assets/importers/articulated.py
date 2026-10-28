@@ -116,14 +116,23 @@ def opening_states(joints: Iterable[Joint], labels: Mapping[str, str], lower_clo
 
 
 def reaching(edge: Edge) -> tuple[float, float] | None:
-    """The limit of a revolute or prismatic edge widened to reach the modeled pose, which upstream limits sometimes exclude."""
+    """The limit of a revolute or prismatic edge made to reach the modeled pose that upstream limits sometimes exclude: a revolute range half a turn off is turned back, any other widened."""
     if edge.type not in ("revolute", "prismatic") or edge.limit is None:
         return None
     low, high = edge.limit
     if low <= TOLERANCE and high >= -TOLERANCE:
         return edge.limit
+    if edge.type == "revolute":
+        for turn in (math.pi, -math.pi):
+            if low + turn <= TOLERANCE and high + turn >= -TOLERANCE:
+                logger.warning("joint %s has the limit [%g, %g] that excludes its modeled pose, it is turned by %g to reach 0", edge.name, low, high, turn)
+                return (_snap(low + turn), _snap(high + turn))
     logger.warning("joint %s has the limit [%g, %g] that excludes its modeled pose, it is widened to reach 0", edge.name, low, high)
     return (min(low, 0.0), max(high, 0.0))
+
+
+def _snap(value: float) -> float:
+    return 0.0 if abs(value) <= TOLERANCE else value
 
 
 def assemble(bodies: Mapping[str, Body], edges: Sequence[Edge], root: str, lower_closed: bool = False) -> Articulation | None:

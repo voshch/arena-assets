@@ -36,6 +36,7 @@ FORMATS = "usdz,sdf,fbx"
 BLENDER_NAME = 63
 GATED = (401, 403)
 TOLERANCE = 1e-4
+SPRING_REST = 1e-3
 UNLIMITED = 1e30
 Y_UP = np.array([[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, -1.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]])
 """Y-up coordinates to the Z-up model frame, as Blender loads a Y-up USD stage, glTF or OBJ file."""
@@ -47,6 +48,8 @@ _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _OTHER = re.compile(r"[^a-z0-9]+")
 _OPENING = re.compile(r"(?:^|_)(?:left|right|top|bottom|upper|lower|front|back|up|down)?(?:door|drawer|lid|cover|hatch|flap|window|hinge)s?(?=_|\d|$)")
 _OPERATING = re.compile(r"(?:^|_)(?:handle|knob|button|switch|latch|lock)s?(?=_|\d|$)")
+_ROLE = re.compile(r"(?:^|_)(?:left|right|top|bottom|upper|lower|front|back|up|down)?(handle|knob|button|switch|latch|lock|drawer|door|lid|cover|hatch|flap|window|hinge)s?(?=_|\d|$)")
+ROLE_PRIORITY = ("handle", "knob", "button", "switch", "latch", "lock", "drawer", "door", "lid", "cover", "hatch", "flap", "window", "hinge")
 
 
 def slug(name: str) -> str:
@@ -72,11 +75,12 @@ def blender_name(name: str) -> str:
 
 @attrs.frozen
 class Body:
-    """One upstream rigid part: its link name, the source nodes whose meshes it takes and a label."""
+    """One upstream rigid part: its link name, the source nodes whose meshes it takes, a label and the surface material its source authors."""
 
     link: str
     nodes: tuple[str, ...] = ()
     label: str = ""
+    material: dict[str, float] | None = attrs.field(default=None, eq=False)
 
 
 @attrs.frozen
@@ -91,6 +95,7 @@ class Edge:
     axis: Vector = (0.0, 0.0, 1.0)
     limit: tuple[float, float] | None = None
     label: str = ""
+    dynamics: dict[str, typing.Any] | None = attrs.field(default=None, eq=False)
 
     def reversed(self) -> Edge:
         """The same joint with parent and child swapped, the axis turned so a joint value means the same pose."""
@@ -113,6 +118,12 @@ def opening_states(joints: Iterable[Joint], labels: Mapping[str, str], lower_clo
         elif low < -TOLERANCE and high > TOLERANCE:
             closed[joint.name], opened[joint.name] = 0.0, high if high >= -low - TOLERANCE else low
     return {"closed": closed, "open": opened} if closed else {}
+
+
+def role(label: str) -> str | None:
+    """Role of a joint its upstream names show, the first of ROLE_PRIORITY among them (handle-like parts, then named openings, then a bare hinge), None when none shows."""
+    found = {match.group(1) for match in _ROLE.finditer(label)}
+    return next((name for name in ROLE_PRIORITY if name in found), None)
 
 
 def reaching(edge: Edge) -> tuple[float, float] | None:
@@ -173,22 +184,37 @@ def assemble(bodies: Mapping[str, Body], edges: Sequence[Edge], root: str, lower
             reached.add(key)
             grow(key)
     joint_names: set[str] = set(RESERVED_STATES)
-    joints = [
-        Joint(
-            name=unique(slug(edge.name), joint_names),
-            type=edge.type,
-            parent=names[edge.parent],
-            child=names[edge.child],
-            origin=edge.origin,
-            axis=edge.axis,
-            limit=reaching(edge),
+    joints = []
+    labels: dict[str, str] = {}
+    for edge in tree:
+        limit = reaching(edge)
+        name = unique(slug(edge.name), joint_names)
+        labels[name] = f"{edge.label} {edge.name} {bodies[edge.child].label} {bodies[edge.child].link}"
+        joints.append(
+            Joint(
+                name=name,
+                type=edge.type,
+                parent=names[edge.parent],
+                child=names[edge.child],
+                origin=edge.origin,
+                axis=edge.axis,
+                limit=limit,
+                role=role(slug(labels[name])) if edge.type != "fixed" else None,
+                dynamics=_turned(edge.dynamics, edge.limit, limit) if edge.type != "fixed" else None,
+            )
         )
-        for edge in tree
-    ]
     if not any(joint.movable for joint in joints):
         return None
-    labels = {joint.name: f"{edge.label} {edge.name} {bodies[edge.child].label} {bodies[edge.child].link}" for joint, edge in zip(joints, tree, strict=True)}
-    return Articulation(links={names[key]: list(bodies[key].nodes) for key in names}, joints=joints, states=opening_states(joints, labels, lower_closed))
+    materials = {names[key]: body.material for key, body in bodies.items() if body.material}
+    return Articulation(links={names[key]: list(bodies[key].nodes) for key in names}, joints=joints, states=opening_states(joints, labels, lower_closed), materials=materials)
+
+
+def _turned(dynamics: Mapping[str, typing.Any] | None, source: tuple[float, float] | None, limit: tuple[float, float] | None) -> dict[str, typing.Any] | None:
+    """Dynamics with the spring rest following a limit that reaching turned by half a turn."""
+    if not dynamics or "spring" not in dynamics or source is None or limit is None or not math.isclose(limit[1] - limit[0], source[1] - source[0], abs_tol=TOLERANCE):
+        return dict(dynamics) if dynamics else None
+    spring = dynamics["spring"]
+    return {**dynamics, "spring": {**spring, "rest": spring.get("rest", 0.0) + limit[0] - source[0]}}
 
 
 def refused(error: urllib.error.HTTPError, repo: str, source: str) -> OSError:
@@ -324,6 +350,71 @@ def _limited(value: float | None) -> bool:
     return value is not None and math.isfinite(value) and abs(value) < UNLIMITED
 
 
+def _authored(prim: Usd.Prim, name: str) -> float | None:
+    attribute = prim.GetAttribute(name)
+    if not attribute or not attribute.HasAuthoredValue():
+        return None
+    value = attribute.Get()
+    return float(value) if value is not None and math.isfinite(float(value)) else None
+
+
+def _usd_dynamics(prim: Usd.Prim, angular: bool, token: str, rest: float, meters: float) -> dict[str, typing.Any] | None:
+    """Passive physics a UsdPhysics joint authors in SI units at the edge's joint values: PhysX joint friction coefficient or axis friction effort, armature, viscous damping, a drive's damping, and a drive's stiffness as a spring when it targets the modeled pose (a drive aimed elsewhere is the source's actuator), angular quantities per radian, None when it authors none."""
+    effort = meters * meters if angular else meters
+    inertia = meters * meters if angular else 1.0
+    gain = meters * meters * 180.0 / math.pi if angular else 1.0
+    instances = ("angular", f"rot{token}") if angular else ("linear", f"trans{token}")
+    dynamics: dict[str, typing.Any] = {}
+    if (coefficient := _authored(prim, "physxJoint:jointFriction")) is not None:
+        dynamics["friction_coefficient"] = coefficient
+    if (armature := _authored(prim, "physxJoint:armature")) is not None:
+        dynamics["armature"] = armature * inertia
+    for instance in instances:
+        axis = f"physxJointAxis:{instance}:"
+        friction = _authored(prim, f"{axis}dynamicFrictionEffort")
+        friction = friction if friction is not None else _authored(prim, f"{axis}staticFrictionEffort")
+        if friction is not None:
+            dynamics.pop("friction_coefficient", None)
+            dynamics["friction"] = friction * effort
+        if (viscous := _authored(prim, f"{axis}viscousFrictionCoefficient")) is not None:
+            dynamics["damping"] = viscous * gain
+        if (armature := _authored(prim, f"{axis}armature")) is not None:
+            dynamics["armature"] = armature * inertia
+        drive = f"drive:{instance}:physics:"
+        if (damping := _authored(prim, f"{drive}damping")) is not None and "damping" not in dynamics:
+            dynamics["damping"] = damping * gain
+        target = _authored(prim, f"{drive}targetPosition") or 0.0
+        if (stiffness := _authored(prim, f"{drive}stiffness")) and abs((math.radians(target) if angular else target * meters) - rest) <= SPRING_REST:
+            dynamics["spring"] = {"stiffness": stiffness * gain, "rest": 0.0}
+    return dynamics or None
+
+
+def _usd_material(body: Usd.Prim) -> dict[str, float] | None:
+    """Physics material most colliders of a body are bound to, its friction coefficients and restitution, None when none is bound."""
+    from pxr import Usd, UsdPhysics, UsdShade
+
+    counts: collections.Counter[str] = collections.Counter()
+    found: dict[str, dict[str, float]] = {}
+    walk = iter(Usd.PrimRange(body, Usd.TraverseInstanceProxies(Usd.PrimDefaultPredicate)))
+    for item in walk:
+        if item != body and item.HasAPI(UsdPhysics.RigidBodyAPI):
+            walk.PruneChildren()
+            continue
+        if not item.HasAPI(UsdPhysics.CollisionAPI):
+            continue
+        material, _ = UsdShade.MaterialBindingAPI(item).ComputeBoundMaterial("physics")
+        if not material or not material.GetPrim().HasAPI(UsdPhysics.MaterialAPI):
+            continue
+        key = str(material.GetPath())
+        counts[key] += 1
+        surface = material.GetPrim()
+        values = {field: _authored(surface, f"physics:{name}") for field, name in (("static_friction", "staticFriction"), ("dynamic_friction", "dynamicFriction"), ("restitution", "restitution"))}
+        found[key] = {field: value for field, value in values.items() if value is not None}
+    if not counts:
+        return None
+    return found[counts.most_common(1)[0][0]] or None
+
+
 def _usd_edge(prim: Usd.Prim, stage: Usd.Stage, cache: UsdGeom.XformCache, model: np.ndarray, joint_name: Callable[[str], str]) -> Edge | None:
     """A UsdPhysics joint as an edge between body paths, None for a joint that anchors one body to the world."""
     from pxr import UsdPhysics
@@ -369,6 +460,7 @@ def _usd_edge(prim: Usd.Prim, stage: Usd.Stage, cache: UsdGeom.XformCache, model
         axis=_unit(axis),
         limit=limit,
         label=prim.GetName(),
+        dynamics=None if kind == "fixed" else _usd_dynamics(prim, kind != "prismatic", str(token), rest, meters),
     )
 
 
@@ -392,7 +484,7 @@ def usd_articulation(path: Path, link_name: Callable[[str], str] = slug, joint_n
         named[blender_name(prim.GetName())].append(key)
     if shared := sorted(name for name, keys in named.items() if len(keys) > 1):
         raise ValueError(f"bodies {', '.join(named[shared[0]])} share the name {shared[0]}, which the builder matches links by")
-    bodies = {key: Body(link=link_name(prim.GetName()), nodes=(blender_name(prim.GetName()),), label=prim.GetName()) for key, prim in found.items()}
+    bodies = {key: Body(link=link_name(prim.GetName()), nodes=(blender_name(prim.GetName()),), label=prim.GetName(), material=_usd_material(prim)) for key, prim in found.items()}
     marked = [key for key, prim in found.items() if prim.HasAPI(UsdPhysics.ArticulationRootAPI)]
     children = {edge.child for edge in edges}
     degree = collections.Counter(key for edge in edges for key in (edge.parent, edge.child))
@@ -474,6 +566,10 @@ def read_urdf(path: Path) -> Urdf:
             scale = float(np.linalg.norm(frame_of[:3, :3] @ (local_axis / np.linalg.norm(local_axis))))
             if limit is not None and kind == "prismatic":
                 limit = (limit[0] * scale, limit[1] * scale)
+            physics = joint.find("dynamics")
+            dynamics = None
+            if physics is not None and kind != "fixed":
+                dynamics = {field: float(value) for field in ("friction", "damping") if (value := physics.get(field)) is not None} or None
             edges.append(
                 Edge(
                     name=name,
@@ -483,6 +579,7 @@ def read_urdf(path: Path) -> Urdf:
                     origin=typing.cast(Vector, tuple(float(component) for component in frame_of[:3, 3])),
                     axis=_unit(frame_of[:3, :3] @ local_axis),
                     limit=limit,
+                    dynamics=dynamics,
                 )
             )
     visuals = []

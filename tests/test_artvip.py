@@ -203,7 +203,7 @@ def test_stage_writes_the_door_joint_with_its_open_and_closed_states(host, tmp_p
     assert "origin::artvip" in annotation["tags"]
     articulation = annotation["articulation"]
     assert articulation["links"] == {"body_2": ["E_body_2"], "door_3": ["E_door_3"]}
-    assert articulation["joints"] == [{"name": "revolute_joint_middle", "type": "revolute", "parent": "body_2", "child": "door_3", "origin": [0.3, 0.0, 0.0], "axis": [0.0, 0.0, 1.0], "limit": [-1.570796, 0.0]}]
+    assert articulation["joints"] == [{"name": "revolute_joint_middle", "type": "revolute", "parent": "body_2", "child": "door_3", "origin": [0.3, 0.0, 0.0], "axis": [0.0, 0.0, 1.0], "limit": [-1.570796, 0.0], "role": "door"}]
     assert articulation["states"] == {"closed": {"revolute_joint_middle": 0.0}, "open": {"revolute_joint_middle": pytest.approx(-math.pi / 2, abs=1e-6)}}
     assert imp.attribution(ITEM).url == f"https://huggingface.co/datasets/{REPO}/tree/{REVISION}/{FOLDER}"
 

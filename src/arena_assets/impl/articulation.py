@@ -11,14 +11,16 @@ from pathlib import Path
 
 import numpy as np
 import yaml
-from pxr import Gf, Sdf, Tf, Usd, UsdGeom, UsdPhysics
+from pxr import Gf, Sdf, Tf, Usd, UsdGeom, UsdPhysics, UsdShade
 
 from arena_assets.impl import ANNOTATION_NAME, collider
 
 if typing.TYPE_CHECKING:
-    from arena_simulation_setup.utils.articulation import Articulation, Box
+    from arena_simulation_setup.utils.articulation import Articulation, Box, Dynamics, Material
 else:
     Articulation = typing.Any
+    Dynamics = typing.Any
+    Material = typing.Any
 
 LINKS = "links"
 URDF_SUFFIX = ".urdf"
@@ -98,7 +100,7 @@ def _inertial(link: ET.Element, box: Box | None, frame: np.ndarray) -> None:
 
 
 def write_urdf(path: Path, name: str, articulation: Articulation, boxes: Mapping[str, Box]) -> None:
-    """URDF of the articulation over the link OBJ meshes, link frames at their parent joints, a 1 kg box inertia per link."""
+    """URDF of the articulation over the link OBJ meshes, link frames at their parent joints, a 1 kg box inertia per link, authored dry friction and damping as joint dynamics."""
     from arena_simulation_setup.utils.articulation import JointType
 
     frames = link_frames(articulation)
@@ -122,6 +124,9 @@ def write_urdf(path: Path, name: str, articulation: Articulation, boxes: Mapping
             ET.SubElement(element, "axis", xyz=_vector(joint.axis))
         if joint.limit is not None:
             ET.SubElement(element, "limit", lower=_number(joint.limit[0]), upper=_number(joint.limit[1]), effort=_number(EFFORT), velocity=_number(joint.speed))
+        dynamics = joint.dynamics
+        if dynamics is not None and (values := {key: _number(value) for key, value in (("damping", dynamics.damping), ("friction", dynamics.friction)) if value is not None}):
+            ET.SubElement(element, "dynamics", values)
     tree = ET.ElementTree(robot)
     ET.indent(tree, "  ")
     tree.write(path, encoding="unicode", xml_declaration=True)
@@ -141,7 +146,7 @@ def axis_rotation(axis: Iterable[float]) -> Gf.Quatf:
 
 
 def write_usd(path: Path, name: str, articulation: Articulation, references: Mapping[str, str]) -> None:
-    """Z-up meters stage with an articulation root over one rigid body per link, the links with meshes referencing their link USD."""
+    """Z-up meters stage with an articulation root over one rigid body per link, the links with meshes referencing their link USD and bound to their physics materials, authored joint dynamics as PhysX joint attributes and drives."""
     from arena_simulation_setup.utils.articulation import JointType
 
     path.unlink(missing_ok=True)
@@ -159,6 +164,8 @@ def write_usd(path: Path, name: str, articulation: Articulation, references: Map
         UsdPhysics.RigidBodyAPI.Apply(prim)
         UsdPhysics.MassAPI.Apply(prim).CreateMassAttr(LINK_MASS)
         bodies[link] = prim.GetPath()
+        if (material := articulation.materials.get(link)) is not None:
+            _bind_material(stage, prim, material)
     scope = UsdGeom.Scope.Define(stage, root.GetPath().AppendChild(_free("joints", (body.name for body in bodies.values())))).GetPath()
     names = [Tf.MakeValidIdentifier(joint.name) for joint in articulation.joints]
     UsdPhysics.FixedJoint.Define(stage, scope.AppendChild(_free("world", names))).CreateBody1Rel().SetTargets([bodies[articulation.root]])
@@ -187,7 +194,50 @@ def write_usd(path: Path, name: str, articulation: Articulation, references: Map
         usd_joint.CreateLocalPos1Attr(origin)
         usd_joint.CreateLocalRot0Attr(rotation)
         usd_joint.CreateLocalRot1Attr(rotation)
+        if joint.dynamics is not None:
+            _author_dynamics(usd_joint.GetPrim(), joint.dynamics, joint.type is not JointType.PRISMATIC)
     stage.GetRootLayer().Save()
+
+
+def _float(prim: Usd.Prim, name: str, value: float) -> None:
+    prim.CreateAttribute(name, Sdf.ValueTypeNames.Float).Set(float(value))
+
+
+def _author_dynamics(prim: Usd.Prim, dynamics: Dynamics, angular: bool) -> None:
+    """PhysX joint friction and armature, axis friction effort, and a drive carrying damping and spring, angular gains per degree."""
+    instance = "angular" if angular else "linear"
+    if dynamics.friction_coefficient is not None or dynamics.armature is not None:
+        prim.AddAppliedSchema("PhysxJointAPI")
+        if dynamics.friction_coefficient is not None:
+            _float(prim, "physxJoint:jointFriction", dynamics.friction_coefficient)
+        if dynamics.armature is not None:
+            _float(prim, "physxJoint:armature", dynamics.armature)
+    if dynamics.friction is not None:
+        prim.AddAppliedSchema(f"PhysxJointAxisAPI:{instance}")
+        _float(prim, f"physxJointAxis:{instance}:staticFrictionEffort", dynamics.friction)
+        _float(prim, f"physxJointAxis:{instance}:dynamicFrictionEffort", dynamics.friction)
+    if dynamics.damping is None and dynamics.spring is None:
+        return
+    per = math.pi / 180.0 if angular else 1.0
+    drive = UsdPhysics.DriveAPI.Apply(prim, instance)
+    drive.CreateTypeAttr(UsdPhysics.Tokens.force)
+    drive.CreateDampingAttr(0.0 if dynamics.damping is None else dynamics.damping * per)
+    drive.CreateStiffnessAttr(0.0 if dynamics.spring is None else dynamics.spring.stiffness * per)
+    if dynamics.spring is not None:
+        drive.CreateTargetPositionAttr(math.degrees(dynamics.spring.rest) if angular else dynamics.spring.rest)
+
+
+def _bind_material(stage: Usd.Stage, link: Usd.Prim, material: Material) -> None:
+    """A physics material under the link carrying its friction and restitution, bound to the link for physics."""
+    surface = UsdShade.Material.Define(stage, link.GetPath().AppendChild("physics_material"))
+    api = UsdPhysics.MaterialAPI.Apply(surface.GetPrim())
+    if material.static_friction is not None:
+        api.CreateStaticFrictionAttr(material.static_friction)
+    if material.dynamic_friction is not None:
+        api.CreateDynamicFrictionAttr(material.dynamic_friction)
+    if material.restitution is not None:
+        api.CreateRestitutionAttr(material.restitution)
+    UsdShade.MaterialBindingAPI.Apply(link).Bind(surface, UsdShade.Tokens.strongerThanDescendants, "physics")
 
 
 def write_link_annotation(bundle: Path, link: str, path: str, box: Box) -> None:

@@ -370,3 +370,38 @@ def test_build_puts_each_light_on_the_link_its_node_sits_under(blender, tmp_path
     assert [(light.name, light.fixture.value, light.link) for light in built.lights] == [("light", "panel", "cabinet"), ("light_1", "bulb", "door")]
     assert built.lights[1].pose[0] == pytest.approx((1.02, 0.25, 0.8), abs=1e-3)
     assert [light["link"] for light in converter.unstructure(built)["lights"]] == ["cabinet", "door"]
+
+
+def test_authored_joint_physics_and_materials_survive_the_urdf_and_a_usd_round_trip(tmp_path):
+    from pxr import Usd, UsdPhysics, UsdShade
+
+    from arena_assets.importers.articulated import usd_articulation
+    from arena_assets.impl.articulation import write_urdf, write_usd
+    from arena_simulation_setup.utils.articulation import structure_articulation
+
+    raw = yaml.safe_load(yaml.safe_dump(ARTICULATION))
+    raw["joints"][0]["dynamics"] = {"friction_coefficient": 0.3, "armature": 0.05, "damping": 2.0, "spring": {"stiffness": 4.0, "rest": 0.0}}
+    raw["joints"][1]["dynamics"] = {"friction": 3.0, "damping": 4.0}
+    raw["materials"] = {"door": {"static_friction": 0.9, "dynamic_friction": 0.7, "restitution": 0.2}}
+    articulation = structure_articulation(raw)
+    assert articulation is not None
+    write_urdf(tmp_path / "cabinet.urdf", "cabinet", articulation, {})
+    robot = ET.parse(tmp_path / "cabinet.urdf").getroot()
+    assert {joint.get("name"): (dynamics.attrib if (dynamics := joint.find("dynamics")) is not None else None) for joint in robot.findall("joint")} == {
+        "hinge": {"damping": "2"},
+        "slide": {"damping": "4", "friction": "3"},
+        "spin": None,
+        "mount": None,
+    }
+    path = tmp_path / "cabinet.articulated.usda"
+    write_usd(path, "cabinet", articulation, {})
+    read = usd_articulation(path)
+    assert read is not None
+    joints = {joint.name: joint for joint in read.joints}
+    hinge, slide = joints["hinge"].dynamics, joints["slide"].dynamics
+    assert (hinge.friction_coefficient, hinge.armature, hinge.damping, hinge.spring.stiffness, hinge.spring.rest) == pytest.approx((0.3, 0.05, 2.0, 4.0, 0.0))
+    assert (slide.friction, slide.damping, slide.spring) == (pytest.approx(3.0), pytest.approx(4.0), None)
+    stage = Usd.Stage.Open(str(path))
+    material, _ = UsdShade.MaterialBindingAPI(stage.GetPrimAtPath("/cabinet/door")).ComputeBoundMaterial("physics")
+    surface = UsdPhysics.MaterialAPI(material.GetPrim())
+    assert (surface.GetStaticFrictionAttr().Get(), surface.GetDynamicFrictionAttr().Get(), surface.GetRestitutionAttr().Get()) == pytest.approx((0.9, 0.7, 0.2))

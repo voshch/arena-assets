@@ -160,6 +160,66 @@ def test_usd_joints_land_in_the_model_frame_in_meters_and_radians(tmp_path):
     assert articulation.states == {"closed": {"hinge": 0.0, "slide": 0.0, "lid_hinge": 0.0}, "open": {"hinge": pytest.approx(math.pi / 2), "slide": pytest.approx(0.4), "lid_hinge": pytest.approx(math.pi / 6)}}
 
 
+def test_usd_joint_physics_and_link_materials_land_in_si_units_at_the_joint_values(tmp_path):
+    from pxr import Sdf, Usd, UsdPhysics, UsdShade
+
+    path = articulated_stage(tmp_path / "stage.usda")
+    stage = Usd.Stage.Open(str(path))
+    hinge = stage.GetPrimAtPath("/Root/Joints/Hinge")
+    hinge.CreateAttribute("physxJoint:jointFriction", Sdf.ValueTypeNames.Float).Set(0.3)
+    hinge.CreateAttribute("physxJoint:armature", Sdf.ValueTypeNames.Float).Set(1000.0)
+    drive = UsdPhysics.DriveAPI.Apply(hinge, "angular")
+    drive.CreateStiffnessAttr(2.0)
+    drive.CreateDampingAttr(0.5)
+    drive.CreateTargetPositionAttr(45.0)
+    slide = stage.GetPrimAtPath("/Root/Joints/Slide")
+    slide.CreateAttribute("physxJointAxis:linear:dynamicFrictionEffort", Sdf.ValueTypeNames.Float).Set(300.0)
+    UsdPhysics.DriveAPI.Apply(slide, "linear").CreateDampingAttr(4.0)
+    lid = UsdPhysics.DriveAPI.Apply(stage.GetPrimAtPath("/Root/Joints/LidHinge"), "angular")
+    lid.CreateStiffnessAttr(1.0)
+    lid.CreateTargetPositionAttr(30.0)
+    surface = UsdShade.Material.Define(stage, "/Root/Looks/Rubber")
+    api = UsdPhysics.MaterialAPI.Apply(surface.GetPrim())
+    api.CreateStaticFrictionAttr(0.9)
+    api.CreateDynamicFrictionAttr(0.7)
+    api.CreateRestitutionAttr(0.2)
+    collider = stage.GetPrimAtPath("/Root/Door/DoorBox")
+    UsdPhysics.CollisionAPI.Apply(collider)
+    UsdShade.MaterialBindingAPI.Apply(collider).Bind(surface, UsdShade.Tokens.weakerThanDescendants, "physics")
+    stage.Save()
+    articulation = usd_articulation(path)
+    assert articulation is not None
+    joints = by_name(articulation)
+    gain = 1e-4 * 180.0 / math.pi
+    hinge_dynamics = joints["hinge"].dynamics
+    assert (joints["hinge"].role, hinge_dynamics.friction_coefficient, hinge_dynamics.friction) == ("door", pytest.approx(0.3), None)
+    assert (hinge_dynamics.armature, hinge_dynamics.damping) == (pytest.approx(0.1), pytest.approx(0.5 * gain))
+    assert hinge_dynamics.spring is None
+    slide_dynamics = joints["slide"].dynamics
+    assert (joints["slide"].role, slide_dynamics.friction, slide_dynamics.damping, slide_dynamics.spring) == ("drawer", pytest.approx(3.0), pytest.approx(4.0), None)
+    assert (joints["lid_hinge"].dynamics.spring.stiffness, joints["lid_hinge"].dynamics.spring.rest) == (pytest.approx(gain), 0.0)
+    assert joints["spin"].dynamics is None
+    assert {link: material.unstructure() for link, material in articulation.materials.items()} == {"door": {"static_friction": pytest.approx(0.9), "dynamic_friction": pytest.approx(0.7), "restitution": pytest.approx(0.2)}}
+
+
+def test_a_turned_limit_carries_its_spring_rest_along(caplog):
+    bodies = {key: Body(link=key) for key in ("body", "door")}
+    edges = [Edge(name="door_hinge", type="revolute", parent="body", child="door", limit=(-3.141593, -1.22173), dynamics={"damping": 0.2, "spring": {"stiffness": 1.0, "rest": -3.041593}})]
+    articulation = assemble(bodies, edges, "body")
+    assert articulation is not None
+    dynamics = articulation.joints[0].dynamics
+    assert (dynamics.damping, dynamics.spring.rest) == (0.2, pytest.approx(0.1, abs=1e-5))
+
+
+def test_urdf_joint_dynamics_and_roles_reach_the_articulation(tmp_path):
+    path = urdf_item(tmp_path / "item")
+    path.write_text(path.read_text().replace('<limit lower="0" upper="1.57"/>', '<limit lower="0" upper="1.57"/><dynamics damping="0.3" friction="0.2"/>'))
+    articulation = urdf_articulation(read_urdf(path), {"link_0": ["link_0"], "link_1": ["link_1"]}, {"link_0": "door"})
+    assert articulation is not None
+    door = by_name(articulation)["joint_0"]
+    assert (door.role, door.dynamics.unstructure()) == ("door", {"friction": 0.2, "damping": 0.3})
+
+
 def test_usd_stage_without_moving_joints_has_no_articulation(tmp_path):
     from pxr import Usd, UsdGeom, UsdPhysics
 

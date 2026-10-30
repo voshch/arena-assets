@@ -81,6 +81,7 @@ def test_glb_round_trip_keeps_document_and_buffer(tmp_path):
 
 
 def test_parts_become_links_with_their_joints_in_the_z_up_model_frame(tmp_path):
+    pytest.importorskip("arena_simulation_setup")
     document = segmented_glb(tmp_path / "item.glb")
     articulation = artiverse_articulation(document, {"articulations": JOINT_ENTRIES})
     assert articulation is not None
@@ -107,6 +108,7 @@ def test_parts_become_links_with_their_joints_in_the_z_up_model_frame(tmp_path):
 
 
 def test_motion_states_besides_closed_and_open_become_detents_unless_reserved(tmp_path):
+    pytest.importorskip("arena_simulation_setup")
     entries = [{**entry, "motionStates": {**entry["motionStates"], "Setting": {"value": 0.2}, "Half Open": {"value": 0.7}}} if entry["pid"] == 2 else entry for entry in JOINT_ENTRIES]
     articulation = artiverse_articulation(segmented_glb(tmp_path / "item.glb"), {"articulations": entries})
     assert articulation is not None
@@ -114,6 +116,7 @@ def test_motion_states_besides_closed_and_open_become_detents_unless_reserved(tm
 
 
 def test_without_motion_states_doors_and_drawers_open_at_their_limits(tmp_path):
+    pytest.importorskip("arena_simulation_setup")
     entries = [{key: value for key, value in entry.items() if key != "motionStates"} for entry in JOINT_ENTRIES]
     articulation = artiverse_articulation(segmented_glb(tmp_path / "item.glb"), {"annotation": {"articulations": entries}})
     assert articulation is not None
@@ -122,6 +125,7 @@ def test_without_motion_states_doors_and_drawers_open_at_their_limits(tmp_path):
 
 
 def test_moving_top_part_hangs_on_a_base_link_and_unknown_types_are_refused(tmp_path):
+    pytest.importorskip("arena_simulation_setup")
     document = segmented_glb(tmp_path / "item.glb")
     document["extras"]["flattened_graph"] = {str(pid): {"parent": -1} for pid in PARTS}
     articulation = artiverse_articulation(document, {"articulations": JOINT_ENTRIES})
@@ -134,6 +138,7 @@ def test_moving_top_part_hangs_on_a_base_link_and_unknown_types_are_refused(tmp_
 
 
 def test_stage_renames_the_part_nodes_and_writes_the_articulation(tmp_path):
+    pytest.importorskip("arena_simulation_setup")
     source = stage(ITEM, item_files(tmp_path / "src"), tmp_path / "dataset")
     assert sorted(path.name for path in source.iterdir()) == [ANNOTATION_NAME, f"artiverse_{ITEM}.glb"]
     document, _ = read_glb(source / f"artiverse_{ITEM}.glb")
@@ -144,6 +149,7 @@ def test_stage_renames_the_part_nodes_and_writes_the_articulation(tmp_path):
 
 
 def test_stage_describes_a_categorized_item_by_its_category(tmp_path):
+    pytest.importorskip("arena_simulation_setup")
     source = stage(f"wall_cabinet/{ITEM}", item_files(tmp_path / "src"), tmp_path / "dataset")
     assert source.name == f"artiverse_{ITEM}"
     annotation = yaml.safe_load((source / ANNOTATION_NAME).read_text())

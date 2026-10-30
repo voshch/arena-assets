@@ -76,6 +76,7 @@ def test_semantics_label_each_link(tmp_path):
 
 
 def test_stage_merges_the_links_into_one_obj_with_the_urdf_joints(tmp_path):
+    pytest.importorskip("arena_simulation_setup")
     source = stage(ITEM, item_zip(tmp_path), tmp_path / "dataset")
     assert source == tmp_path / "dataset" / "Common" / "Object" / NAME
     assert sorted(path.relative_to(source).as_posix() for path in source.rglob("*") if path.is_file()) == [ANNOTATION_NAME, f"{NAME}.mtl", f"{NAME}.obj", f"upstream/{ITEM}/images/wood.png"]
@@ -110,6 +111,7 @@ def hinge(source: Path) -> np.ndarray:
 
 
 def test_stage_scales_the_mesh_and_joints_to_the_category_size(tmp_path):
+    pytest.importorskip("arena_simulation_setup")
     scaled = stage(ITEM, item_zip(tmp_path / "scaled"), tmp_path / "scaled" / "dataset")
     raw = stage(ITEM, item_zip(tmp_path / "raw", category="Spaceship"), tmp_path / "raw" / "dataset")
     assert depth(scaled) == pytest.approx(0.5)
@@ -126,6 +128,7 @@ def test_staged_obj_loads_with_every_link_node_in_blender(blender_python, tmp_pa
 
 @pytest.mark.network
 def test_live_item_stages_or_names_the_gate(tmp_path):
+    pytest.importorskip("arena_simulation_setup")
     imp = PartNetMobility(cache=tmp_path / "cache")
     try:
         src = imp.fetch(ITEM)

@@ -195,6 +195,7 @@ def test_fetch_of_an_unknown_item_names_the_listing_command(host, tmp_path):
 
 
 def test_stage_writes_the_door_joint_with_its_open_and_closed_states(host, tmp_path):
+    pytest.importorskip("arena_simulation_setup")
     repository(host)
     imp = importer(host, tmp_path)
     source = imp.stage(ITEM, imp.fetch(ITEM), tmp_path / "dataset")

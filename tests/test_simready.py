@@ -295,6 +295,7 @@ def test_stage_writes_no_articulation_for_a_rigid_package(host, tmp_path):
 
 
 def test_stage_writes_the_physics_payload_joints_as_articulation(host, tmp_path):
+    pytest.importorskip("arena_simulation_setup")
     articulated_package(host)
     imp = importer(host, tmp_path)
     imp.fetch(ARTICULATED)

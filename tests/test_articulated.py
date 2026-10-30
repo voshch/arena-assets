@@ -79,6 +79,7 @@ def test_slug_and_unique_names():
 
 
 def test_opening_states_close_doors_and_drawers_at_the_modeled_pose():
+    pytest.importorskip("arena_simulation_setup")
     from arena_simulation_setup.utils.articulation import Joint
 
     joints = [
@@ -96,6 +97,7 @@ def test_opening_states_close_doors_and_drawers_at_the_modeled_pose():
 
 
 def test_assemble_turns_a_revolute_limit_half_a_turn_off_back_onto_the_modeled_pose(caplog):
+    pytest.importorskip("arena_simulation_setup")
     bodies = {key: Body(link=key) for key in ("body", "door")}
     edges = [Edge(name="door_hinge", type="revolute", parent="body", child="door", limit=(-3.141593, -1.22173))]
     with caplog.at_level(logging.WARNING):
@@ -107,6 +109,7 @@ def test_assemble_turns_a_revolute_limit_half_a_turn_off_back_onto_the_modeled_p
 
 
 def test_assemble_widens_a_limit_that_excludes_the_modeled_pose(caplog):
+    pytest.importorskip("arena_simulation_setup")
     bodies = {key: Body(link=key) for key in ("body", "door", "drawer")}
     edges = [
         Edge(name="door_hinge", type="revolute", parent="body", child="door", limit=(0.5, 1.5)),
@@ -121,6 +124,7 @@ def test_assemble_widens_a_limit_that_excludes_the_modeled_pose(caplog):
 
 
 def test_assemble_renames_a_joint_named_like_a_reserved_field():
+    pytest.importorskip("arena_simulation_setup")
     bodies = {key: Body(link=key) for key in ("body", "dial")}
     articulation = assemble(bodies, [Edge(name="Angle", type="continuous", parent="body", child="dial")], "body")
     assert articulation is not None
@@ -128,6 +132,7 @@ def test_assemble_renames_a_joint_named_like_a_reserved_field():
 
 
 def test_assemble_keeps_a_tree_hangs_loose_bodies_fixed_and_drops_loops(caplog):
+    pytest.importorskip("arena_simulation_setup")
     bodies = {key: Body(link=key) for key in ("a", "b", "c", "d")}
     edges = [Edge(name="ab", type="continuous", parent="a", child="b"), Edge(name="bc", type="fixed", parent="b", child="c"), Edge(name="ca", type="fixed", parent="c", child="a")]
     with caplog.at_level(logging.WARNING):
@@ -139,6 +144,7 @@ def test_assemble_keeps_a_tree_hangs_loose_bodies_fixed_and_drops_loops(caplog):
 
 
 def test_usd_joints_land_in_the_model_frame_in_meters_and_radians(tmp_path):
+    pytest.importorskip("arena_simulation_setup")
     articulation = usd_articulation(articulated_stage(tmp_path / "stage.usda"))
     assert articulation is not None
     assert articulation.links == {"base": ["Base"], "door": ["Door"], "rail": ["Rail"], "drawer": ["Drawer"], "wheel": ["Wheel"], "lid": ["Lid"], "loose": ["Loose"]}
@@ -161,6 +167,7 @@ def test_usd_joints_land_in_the_model_frame_in_meters_and_radians(tmp_path):
 
 
 def test_usd_joint_physics_and_link_materials_land_in_si_units_at_the_joint_values(tmp_path):
+    pytest.importorskip("arena_simulation_setup")
     from pxr import Sdf, Usd, UsdPhysics, UsdShade
 
     path = articulated_stage(tmp_path / "stage.usda")
@@ -203,6 +210,7 @@ def test_usd_joint_physics_and_link_materials_land_in_si_units_at_the_joint_valu
 
 
 def test_a_turned_limit_carries_its_spring_rest_along(caplog):
+    pytest.importorskip("arena_simulation_setup")
     bodies = {key: Body(link=key) for key in ("body", "door")}
     edges = [Edge(name="door_hinge", type="revolute", parent="body", child="door", limit=(-3.141593, -1.22173), dynamics={"damping": 0.2, "spring": {"stiffness": 1.0, "rest": -3.041593}})]
     articulation = assemble(bodies, edges, "body")
@@ -212,6 +220,7 @@ def test_a_turned_limit_carries_its_spring_rest_along(caplog):
 
 
 def test_urdf_joint_dynamics_and_roles_reach_the_articulation(tmp_path):
+    pytest.importorskip("arena_simulation_setup")
     path = urdf_item(tmp_path / "item")
     path.write_text(path.read_text().replace('<limit lower="0" upper="1.57"/>', '<limit lower="0" upper="1.57"/><dynamics damping="0.3" friction="0.2"/>'))
     articulation = urdf_articulation(read_urdf(path), {"link_0": ["link_0"], "link_1": ["link_1"]}, {"link_0": "door"})
@@ -221,6 +230,7 @@ def test_urdf_joint_dynamics_and_roles_reach_the_articulation(tmp_path):
 
 
 def test_usd_stage_without_moving_joints_has_no_articulation(tmp_path):
+    pytest.importorskip("arena_simulation_setup")
     from pxr import Usd, UsdGeom, UsdPhysics
 
     stage = Usd.Stage.CreateNew(str(tmp_path / "rigid.usda"))
@@ -248,6 +258,7 @@ def test_blender_loads_the_usd_bodies_under_their_link_nodes_at_the_joint_origin
 
 
 def test_urdf_tree_lands_in_the_model_frame(tmp_path):
+    pytest.importorskip("arena_simulation_setup")
     urdf = read_urdf(urdf_item(tmp_path / "item"))
     assert urdf.root == "base"
     assert urdf.links["link_1"][:3, :3] == pytest.approx(UP, abs=1e-9)
@@ -291,6 +302,7 @@ def test_blender_loads_the_merged_obj_as_link_objects_in_the_model_frame(blender
 
 
 def test_opening_states_read_side_prefixed_parts_covers_hinges_and_skip_outdoor():
+    pytest.importorskip("arena_simulation_setup")
     from arena_simulation_setup.utils.articulation import Joint
 
     joints = [

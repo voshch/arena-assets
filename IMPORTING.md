@@ -120,7 +120,7 @@ The [SocNavBench](https://github.com/CMU-TBD/SocNavBench) curated episodes on et
 
 ### juelich
 
-The [Juelich pedestrian dynamics archive](https://ped.fz-juelich.de/da/doku.php) under CC BY 4.0: the BaSiGo 2013 bidirectional corridor and 90 degree crossing and the HERMES 2009 corridors, bottleneck and T-junction. The item id is `<set>/<run>` with set `basigo_bidirectional`, `basigo_crossing_90` or `hermes_<experiment>`, and the world `juelich_<set>_<k>` is one per distinct lab layout of a set, its pillars and inner walls walled in.
+The [Juelich pedestrian dynamics archive](https://ped.fz-juelich.de/da/doku.php) under CC BY 4.0: the BaSiGo 2013 bidirectional corridor and 90 degree crossing and the HERMES 2009 corridors, bottleneck and T-junction. The item id is `<set>/<run>` with set `basigo_bidirectional`, `basigo_crossing_90` or `hermes_<experiment>`, and the world `juelich_<set>_<k>` is one per distinct lab layout of a set, its pillars and inner walls walled in. The archive's HERMES bottleneck layouts stop the two bars short of the side walls of a 12 m box, so the importer runs them out to the side walls of the experiment's 18 m passage around the opening (Liao et al. 2016).
 
 ### madras
 

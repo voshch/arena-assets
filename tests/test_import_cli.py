@@ -1,6 +1,7 @@
 import io
 import json
 import shutil
+import urllib.error
 import zipfile
 from pathlib import Path
 
@@ -187,3 +188,20 @@ def test_source_listing_json_gives_the_items_and_the_target(tmp_path):
     assert result.exit_code == 0, result.output
     listed = json.loads(result.output)
     assert listed == {"kind": "world", "source": "barn", "target": str(tmp_path / "imported" / "worlds"), "count": 300, "items": [str(index) for index in range(300)]}
+
+
+@pytest.mark.network
+def test_a_gated_listing_is_a_one_line_error(tmp_path):
+    from arena_assets.importers.artiverse import RELEASES, REPO, Artiverse
+
+    try:
+        Artiverse(cache=tmp_path / "probe").provider.size(RELEASES)
+    except urllib.error.HTTPError as error:
+        if error.code not in (401, 403):
+            raise
+    else:
+        pytest.skip(f"{REPO} is accessible, listing it downloads the whole archive")
+    result = runner.invoke(app, ["import", "object", "artiverse", "--cache", str(tmp_path / "cache")])
+    assert result.exit_code == 1
+    assert f"request access at https://huggingface.co/datasets/{REPO}" in plain(result.output)
+    assert "Traceback" not in plain(result.output)

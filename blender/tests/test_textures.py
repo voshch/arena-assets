@@ -62,6 +62,36 @@ def test_limited_textures_are_what_the_exported_model_carries(tmp_path):
     assert sizes == [(4, 2048), (2048, 4)]
 
 
+PATHLESS = """import json, sys, bpy
+from arena_assets_blender.converter import ModelConverter
+
+texture, out = sys.argv[1:]
+with ModelConverter() as converter:
+    bpy.ops.mesh.primitive_cube_add(size=1.0)
+    material = bpy.data.materials.new("Skin")
+    material.use_nodes = True
+    node = material.node_tree.nodes.new("ShaderNodeTexImage")
+    node.image = bpy.data.images.load(texture)
+    node.image.pack()
+    node.image.filepath = ""
+    material.node_tree.links.new(node.outputs["Color"], material.node_tree.nodes["Principled BSDF"].inputs["Base Color"])
+    bpy.context.scene.objects[0].data.materials.append(material)
+    converter.save(out)
+    result = {"filepath": node.image.filepath, "packed": node.image.packed_file is not None}
+print(json.dumps(result))
+"""
+
+
+def test_an_obj_names_the_packed_images_a_gltf_brings_without_a_file(tmp_path):
+    Image.new("RGB", (8, 8), (200, 10, 10)).save(tmp_path / "red.png")
+    out = tmp_path / "skin.obj"
+    proc = subprocess.run([sys.executable, "-c", PATHLESS, str(tmp_path / "red.png"), str(out)], capture_output=True, text=True, timeout=300, check=True)
+    assert json.loads(proc.stdout.splitlines()[-1]) == {"filepath": "", "packed": True}
+    maps = [line.split()[-1] for line in (out / "skin.mtl").read_text().splitlines() if line.startswith("map_Kd")]
+    assert maps
+    assert all(Image.open(out / name).getpixel((0, 0)) == (200, 10, 10) for name in maps)
+
+
 @pytest.mark.parametrize(
     ("mode", "size", "max_px", "expected", "image_format"),
     [("RGB", (4096, 100), 2048, (2048, 50), "JPEG"), ("RGBA", (300, 300), 2048, (300, 300), "PNG"), ("I;16", (20, 10), 8, (8, 4), "JPEG")],

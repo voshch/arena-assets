@@ -62,7 +62,11 @@ Each type is discovered under its own directory of the dataset (`Object`, `Mater
 
 ### Object lights
 
-An object's `annotation.yaml` may carry `lights:`, one entry per light it emits: `name` (default `light`), `fixture` (`bulb`, `spot`, `downlight`, `panel` or `tube`), `pose` in the frame of the built model as `[[x, y, z], [w, x, y, z]]` or `[[x, y, z], [roll, pitch, yaw]]` (the light emits along the local -z axis of that pose, so `[1, 0, 0, 0]` shines straight down), `lumens`, `cct_K` (default 6500) and, for a spot, `cone_deg`. The build fills it from the lights of the source model (point lights become bulbs, spots keep their cone, area lights become panels or downlights, suns are skipped, 683 lm per Blender watt, color temperature from the light color) unless the source annotation already lists lights, and strips the lights from every exported model, so the annotation is the only place an object's light lives. glTF sources carry point and spot lights, USD sources also carry area lights.
+An object's `annotation.yaml` may carry `lights:`, one entry per light it emits: `name` (default `light`), `fixture` (`bulb`, `spot`, `downlight`, `panel` or `tube`), `pose` in the frame of the built model as `[[x, y, z], [w, x, y, z]]` or `[[x, y, z], [roll, pitch, yaw]]` (the light emits along the local -z axis of that pose, so `[1, 0, 0, 0]` shines straight down), `lumens`, `cct_K` (default 6500), for a spot `cone_deg`, and on an articulated object `link`. The build fills it from the lights of the source model (point lights become bulbs, spots keep their cone, area lights become panels or downlights, suns are skipped) unless the source annotation already lists lights, and strips the lights from every exported model, so the annotation is the only place an object's light lives. glTF sources carry point and spot lights, USD sources also carry area lights.
+
+The stored lumens are what the runtime renders. A light from a non-USD source takes 683 lm per Blender watt and its color temperature from the light color. A Blender spot's power is that of a point light of the same on-axis intensity, so a spot keeps `683 * W * sin^2(cone/2) / 4`, the flux the runtime puts into its cone. A USD source's lights take their photometry from UsdLux, not from Blender's watts: `intensity * 2^exposure` (divided by the world-space surface area when `normalize` is set) over the world-space emitting area, sized by the prim's world scale, with `colorTemperature` when `enableColorTemperature` is set and a shaping cone below 90 degrees making a spot. The lumens invert the runtime's Isaac mapping (`intensity = 5 * lumens / (pi * fixture area)`, divided by `sin^2(cone/2)` for a spot): `pi * radiance * area / 5`, the area a spot's face area times `sin^2(cone/2)`, a sphere's area `4 * pi * r^2`. The runtime fixture then emits in Isaac the flux the source emits, so an asset authored for Isaac renders there as authored. The build matches each Blender light to its prim by name and ancestors, a light it cannot match keeps the Blender rule.
+
+On an articulated object every extracted light gets `link`, the link of the articulation node it sits under by the rule that assigns meshes to links (the light's name or its nearest listed ancestor), the root link for the rest. The runtime moves a light with its link as the joints move.
 
 A light may also carry `glow`, the name of the Blender material whose surfaces glow while the light is on. The build gives each extracted light the nearest emissive material: one whose Principled BSDF has a constant, non-black `Emission Color` and an `Emission Strength` above 0 (a textured emission never counts), measured from the light to the center of the bounding box of the faces using the material. Several lights may share one material, and an emissive material nearest to no light is left as it is. A hand-annotated `glow` must name a material used by the model, otherwise the build of that object fails with the list of its materials. Glow materials ship dark: their emission is cleared in every exported format, and the simulator lights them with the lamp. In the SDF export each glow material is a visual of its own, `glow_<material>` with the mesh `<name>.glow_<i>.dae` (`i` counts the glow materials in sorted name order), next to `visual` with the remaining faces in `<name>.dae`. A glow visual carries a `<material>` with the base color as `ambient` and `diffuse` and a black `specular` and `emissive`, unless the base color is textured.
 
@@ -90,6 +94,41 @@ arena-assets semantic seats apply seats.yaml ./dataset [--overwrite]
 ```
 
 `propose` first asks which objects are for sitting, by asset path and description in batches of 50, unless `--only` names the assets. For each of them it sends the top-down and perspective previews of a build with `-o previews` and the worked example [seats_example.yaml](src/arena_assets/semantic/seats_example.yaml), asks `--samples` times (default 3) and keeps the slot count most answers agree on, the median box of matched slots and the facings most answers name. The example object is asked without its own example. It prints the tokens used and merges each object's proposal into `--out` as soon as it has it, keeping the objects already there. It stops at the first object whose samples all fail, the proposals so far kept. `apply` writes reviewed proposals into the source annotations, skipping objects that already have `sit` slots unless `--overwrite`, with which an empty list removes them. It checks every proposal before writing any file.
+
+### Object articulation
+
+An object's `annotation.yaml` may carry `articulation:`, the links of its meshes, the joints between them and named joint states. `links` maps each link name to the source nodes whose meshes it takes, and a link may list no node (the intermediate link of a joint with two degrees of freedom). A joint has a `name`, a `type` (`revolute`, `prismatic`, `continuous` or `fixed`), a `parent` and a `child` link, an `origin` point and a unit `axis`, a `limit` `[lower, upper]` for revolute (radians) and prismatic (meters) joints, an optional `velocity` (rad/s or m/s), an optional `role` (`door`, `drawer`, `lid`, `cover`, `hatch`, `flap`, `window`, `hinge`, `handle`, `knob`, `button`, `switch`, `latch` or `lock`) and optional `dynamics`, the passive physics the source authors, each part optional: `friction` in N or N m, or `friction_coefficient`, PhysX's unitless joint friction that scales with the joint's load, `damping` in N s/m or N m s/rad, `armature` in kg or kg m^2 and a `spring` `{stiffness, rest}` in N/m or N m/rad pulling the joint toward `rest`. `materials` maps a link to the surface its colliders have, `static_friction` and `dynamic_friction` coefficients and a `restitution` in [0, 1]. `states` maps a state name to the values of some joints. The links form one tree under the root link, the one no joint has as its child. `detents` names positions of single joints, `<joint>: {<name>: <value>}` with each value inside the joint's limit, such as the clicks of a dial, read and written at runtime as the joint's `setting.` field, and the build scales prismatic ones with the model like the states. State, joint and detent names avoid the runtime's field names `state`, `target`, `moving`, `blocked`, `openness`, `pos`, `angle`, `setting` and `q`.
+
+```yaml
+articulation:
+  links:
+    cabinet: [body]
+    door: [door]
+    drawer: [drawer_front, drawer_box]
+  joints:
+    - {name: hinge, type: revolute, parent: cabinet, child: door, origin: [0.45, -0.3, 0.0], axis: [0, 0, 1], limit: [0.0, 1.6]}
+    - {name: slide, type: prismatic, parent: cabinet, child: drawer, axis: [0, -1, 0], limit: [0.0, 0.35], velocity: 0.2, role: drawer, dynamics: {friction: 4.0, damping: 10.0}}
+  materials:
+    drawer: {static_friction: 0.5, dynamic_friction: 0.3}
+  states:
+    closed: {hinge: 0.0, slide: 0.0}
+    open: {hinge: 1.6, slide: 0.35}
+  detents:
+    hinge: {ajar: 0.4}
+```
+
+The modeled mesh is the object at all joint values 0, where every link frame coincides with the model frame. In a build dataset, `origin` and `axis` are in the frame of the source model in meters, Z up, as for `collider:`, and the build moves them with the model when it stands the model upright on the floor, so the built annotation holds them in the frame of the built model. The articulation parses with `arena_simulation_setup.utils.articulation`, which the Arena workspace provides, and an articulation that does not parse keeps the object out of the build with the reason.
+
+A mesh object of the model belongs to the link whose nodes name it or its nearest listed ancestor, both compared without Blender's duplicate suffix such as `.001`, and the root link takes every mesh no link claims. A USD source of an articulated object loads with every Xform kept as an object of its own, so an Xform holding a single mesh is a node under its own name. A listed node that matches no object fails the build of that object with the missing nodes and the objects the model has.
+
+Next to the whole models at rest, which stay as without an articulation, the build writes:
+
+- `links/<link>/` for every link with meshes: a static object bundle in the build's formats plus `obj` (`<link>.usdz`, `<link>.sdf/<link>.sdf`, `<link>.obj/<link>.obj`, ...), its geometry in the frame of the built model, and an `annotation.yaml` with the link's `name`, `path` and `bounding_box`. Its USD meshes get the static triangle-mesh collision the object's have, and an object `collider:` is not baked into links.
+- `<name>.urdf`: one URDF link per articulation link, each link frame at its parent joint, visual and collision meshes `links/<link>/<link>.obj/<link>.obj` offset back into the model frame, a 1 kg inertia of the link's box, a `<limit>` with the joint's velocity on revolute and prismatic joints, and a `<dynamics>` with the authored `damping` and `friction`.
+- `<name>.articulated.usda`: a Z-up meters stage whose default prim `/<name>` is the articulation root, one rigid body Xform of 1 kg per link referencing the link's USD model (links without meshes are empty Xforms), a fixed joint from the world to the root link, and per joint a `PhysicsRevoluteJoint` (also for continuous joints, without limits), `PhysicsPrismaticJoint` or `PhysicsFixedJoint` between the parent and child link with the joint axis as its X axis, limits in degrees or meters, the authored dynamics as `physxJoint:jointFriction` and `armature`, an axis friction effort and a force drive carrying the damping and the spring (gains and rest per degree on angular joints), and each link with a material bound to a `physics_material` of its own for physics. The build writes it when it exports a USD format.
+- `swept` in the built `articulation:`, the box `[[x_min, x_max], [y_min, y_max], [z_min, z_max]]` the links cover over every reachable joint value. `bounding_box` stays the box at rest.
+
+The database stores `articulated` for every object and the articulation as JSON for an articulated one. The runtime fills what a joint does not author from its role and kind, see the [sim README](../arena_runtime/arena_runtime/arena_runtime/sim/README.md). `--overwrite annotations` keeps the articulation of the last build, since a changed articulation changes the exported links, and warns that a source articulation the last build lacks needs a model build.
 
 ### Sound assets
 
@@ -248,3 +287,6 @@ pre-commit install
 pytest tests/
 ruff check . && ruff format src
 ```
+
+`pytest tests/` leaves out the tests marked `network`, which reach the upstream hosts of the
+importers. `pytest -m network tests/` runs them.

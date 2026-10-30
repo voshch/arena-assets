@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import functools
 import io
 import logging
@@ -20,7 +21,8 @@ from . import ModelFormat, sdf_model
 from .CoordinateSystem import CoordinateSystem
 from .geom import BoundingBox
 from .io_utils import capture_all_output
-from .lights import SourceLight, SourceMaterial
+from .lights import SourceLight, SourceMaterial, UsdLight, matching_prim
+from .links import LinkBox, LinkObjects, Side, base_name, link_of, node_links
 from .textures import TextureLimit, limited
 
 logger = logging.getLogger("ModelConverter")
@@ -90,6 +92,72 @@ def _keep_faces(mesh: bpy.types.Mesh, faces: np.ndarray) -> None:
             mesh.materials.pop(index=index)
 
 
+def usd_lights(path: str) -> list[UsdLight]:
+    """Rect, disk and sphere UsdLux lights of a USD stage."""
+    bpy.utils.expose_bundled_modules()
+    from pxr import Usd, UsdLux
+
+    stage = Usd.Stage.Open(path)
+    found = []
+    for prim in stage.Traverse(Usd.TraverseInstanceProxies(Usd.PrimDefaultPredicate)):
+        if prim.IsA(UsdLux.RectLight):
+            rect = UsdLux.RectLight(prim)
+            size = {"width": rect.GetWidthAttr().Get(), "height": rect.GetHeightAttr().Get()}
+        elif prim.IsA(UsdLux.DiskLight):
+            size = {"radius": UsdLux.DiskLight(prim).GetRadiusAttr().Get()}
+        elif prim.IsA(UsdLux.SphereLight):
+            size = {"radius": UsdLux.SphereLight(prim).GetRadiusAttr().Get()}
+        else:
+            continue
+        light = UsdLux.LightAPI(prim)
+        cone = UsdLux.ShapingAPI(prim).GetShapingConeAngleAttr().Get()
+        found.append(
+            UsdLight(
+                names=tuple(str(prim.GetPath()).strip("/").split("/")),
+                kind=prim.GetTypeName(),
+                **{key: float(value) for key, value in size.items() if value is not None},
+                intensity=float(light.GetIntensityAttr().Get() or 0.0),
+                exposure=float(light.GetExposureAttr().Get() or 0.0),
+                normalize=bool(light.GetNormalizeAttr().Get()),
+                cct_K=float(light.GetColorTemperatureAttr().Get() or 6500.0) if light.GetEnableColorTemperatureAttr().Get() else None,
+                cone_deg=2.0 * float(cone) if cone is not None and cone < 90.0 else None,
+            )
+        )
+    return found
+
+
+def _usd_light(light: SourceLight, prim: UsdLight, scale: mathutils.Vector) -> SourceLight:
+    """A light with the photometry, shape and cone of the UsdLux prim it was imported from, sized by its world scale."""
+    sx, sy, sz = (abs(component) for component in scale)
+    if prim.kind == "RectLight":
+        area = face = prim.width * sx * prim.height * sy
+        kind, shape = "AREA", "RECTANGLE"
+    elif prim.kind == "DiskLight":
+        area = face = math.pi * prim.radius**2 * sx * sy
+        kind, shape = "AREA", "DISK"
+    else:
+        radius = prim.radius * (sx * sy * sz) ** (1.0 / 3.0)
+        area, face = 4.0 * math.pi * radius**2, math.pi * radius**2
+        kind, shape = "POINT", ""
+    radiance = prim.intensity * 2.0**prim.exposure / (area if prim.normalize and area > 0.0 else 1.0)
+    return dataclasses.replace(
+        light,
+        type=kind if prim.cone_deg is None else "SPOT",
+        shape=shape,
+        spot_size=0.0 if prim.cone_deg is None else math.radians(prim.cone_deg),
+        radiance=radiance,
+        area=area,
+        face_area=face,
+        cct_K=prim.cct_K,
+    )
+
+
+def _extent(points: list[mathutils.Vector]) -> tuple[Side, Side, Side]:
+    """Axis-aligned low and high of points per axis."""
+    xs, ys, zs = zip(*points, strict=True)
+    return (min(xs), max(xs)), (min(ys), max(ys)), (min(zs), max(zs))
+
+
 def _unparent(obj: bpy.types.Object) -> None:
     matrix = obj.matrix_world.copy()
     obj.parent = None
@@ -113,7 +181,7 @@ class _ModelConverterExt(typing.Protocol):
     def coordinates(cls) -> CoordinateSystem: ...
 
     @classmethod
-    def load(cls, path: str) -> None: ...
+    def load(cls, path: str, **options: typing.Any) -> None: ...
 
     @classmethod
     def save(cls, path: str) -> None: ...
@@ -126,8 +194,8 @@ class _ModelConverterExt(typing.Protocol):
                 return coordinates
 
             @classmethod
-            def load(cls, path: str) -> None:
-                load(filepath=path)
+            def load(cls, path: str, **options: typing.Any) -> None:
+                load(filepath=path, **options)
 
             @classmethod
             def save(cls, path: str) -> None:
@@ -182,6 +250,8 @@ class ModelConverter:
         self._coordinates = CoordinateSystem.default()
         self._stdout = io.StringIO()
         self._stderr = io.StringIO()
+        self._lineages: dict[str, list[str]] = {}
+        self._links: dict[str, str] = {}
 
     @property
     def stdout(self) -> str:
@@ -191,11 +261,12 @@ class ModelConverter:
     def stderr(self) -> str:
         return self._stderr.getvalue()
 
-    def load(self, path: str) -> None:
+    def load(self, path: str, **options: typing.Any) -> None:
+        """Load a model, options going to the format's importer."""
         ext = os.path.splitext(path)[-1].lower().strip(".")
         if ext in self.__exts:
             ext_cls = self.__exts[ext]
-            ext_cls.load(path)
+            ext_cls.load(path, **options)
             self._coordinates = ext_cls.coordinates()
         else:
             raise ValueError(f"Unsupported file extension: {ext}")
@@ -318,11 +389,17 @@ class ModelConverter:
             return np.zeros((0, 3)), np.zeros((0, 3), np.int64)
         return np.concatenate(points), np.concatenate(triangles)
 
-    def lights(self) -> list[SourceLight]:
-        """Light objects of the scene in world coordinates, sorted by object name."""
+    def lights(self, usd: str | None = None, links: dict[str, list[str]] | None = None, root: str = "") -> list[SourceLight]:
+        """Light objects of the scene in world coordinates, sorted by object name, with the photometry of the UsdLux prims of usd and on the articulation links when given."""
         bpy.context.view_layer.update()
-        return [
-            SourceLight(
+        prims = usd_lights(usd) if usd else []
+        owners = node_links(links or {})
+        found = []
+        for obj in sorted(bpy.context.scene.objects, key=lambda obj: obj.name):
+            if obj.type != "LIGHT":
+                continue
+            lineage = self._lineage(obj)
+            light = SourceLight(
                 name=obj.name,
                 type=obj.data.type,
                 shape=obj.data.shape if obj.data.type == "AREA" else "",
@@ -331,16 +408,20 @@ class ModelConverter:
                 color=tuple(obj.data.color),
                 location=tuple(obj.matrix_world.translation),
                 rotation=tuple(obj.matrix_world.decompose()[1]),
+                link=link_of(lineage, owners, root) if links is not None else "",
             )
-            for obj in sorted(bpy.context.scene.objects, key=lambda obj: obj.name)
-            if obj.type == "LIGHT"
-        ]
+            prim = matching_prim([base_name(name) for name in lineage], prims)
+            if prim is not None:
+                prims.remove(prim)
+                light = _usd_light(light, prim, obj.matrix_world.to_scale())
+            found.append(light)
+        return found
 
     def remove_lights(self) -> None:
         """Delete every light object, keeping the world transform of its children."""
         for obj in [obj for obj in bpy.context.scene.objects if obj.type == "LIGHT"]:
             for child in obj.children:
-                _unparent(child)
+                self._detach(child)
             light = obj.data
             bpy.data.objects.remove(obj, do_unlink=True)
             if light.users == 0:
@@ -397,6 +478,7 @@ class ModelConverter:
                 piece = obj.copy()
                 piece.data = obj.data.copy()
                 piece.name = f"{obj.name}_{name}"
+                self._lineages[piece.name] = self._lineage(obj)
                 for collection in obj.users_collection:
                     collection.objects.link(piece)
                 _keep_faces(piece.data, faces[name])
@@ -406,10 +488,61 @@ class ModelConverter:
         for objects in _glow_objects(glow).values():
             for obj in objects:
                 for child in obj.children:
-                    _unparent(child)
-                _unparent(obj)
+                    self._detach(child)
+                self._detach(obj)
         bpy.context.view_layer.update()
         bpy.context.scene[GLOW_MATERIALS] = glow
+
+    def _lineage(self, obj: bpy.types.Object) -> list[str]:
+        """Names of an object and its ancestors as loaded, nearest first, kept across unparenting."""
+        if obj.name in self._lineages:
+            return self._lineages[obj.name]
+        return [obj.name, *(self._lineage(obj.parent) if obj.parent is not None else ())]
+
+    def _detach(self, obj: bpy.types.Object) -> None:
+        self._lineages[obj.name] = self._lineage(obj)
+        _unparent(obj)
+
+    def split_links(self, links: dict[str, list[str]], root: str) -> list[LinkObjects]:
+        """Assign every mesh object to the link naming it or its nearest listed ancestor, root taking the rest, and unparent the meshes."""
+        bpy.context.view_layer.update()
+        owners = node_links(links)
+        known = {base_name(name) for obj in bpy.context.scene.objects for name in self._lineage(obj)}
+        if missing := sorted(set(owners) - known):
+            raise ValueError(f"articulation nodes {', '.join(missing)} match no object of the model, its objects are: {', '.join(sorted(obj.name for obj in bpy.context.scene.objects))}")
+        meshes = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
+        self._links = {obj.name: link_of(self._lineage(obj), owners, root) for obj in meshes}
+        for obj in meshes:
+            self._detach(obj)
+        bpy.context.view_layer.update()
+        return [LinkObjects(link=link, objects=sorted(name for name, owner in self._links.items() if owner == link)) for link in dict.fromkeys([*links, root])]
+
+    def link_bounding_boxes(self) -> list[LinkBox]:
+        """World-space bounding box of each link's meshes, links without meshes left out."""
+        bpy.context.view_layer.update()
+        corners: dict[str, list[mathutils.Vector]] = {}
+        for obj in bpy.context.scene.objects:
+            if obj.type == "MESH" and obj.name in self._links:
+                corners.setdefault(self._links[obj.name], []).extend(obj.matrix_world @ mathutils.Vector(corner) for corner in obj.bound_box)
+        return [LinkBox(link=link, bounding_box=_extent(points)) for link, points in corners.items()]
+
+    def save_link(self, link: str, path: str) -> None:
+        """Save only the meshes of one link, every other object out of the scene for the export and back afterwards."""
+        keep = {name for name, owner in self._links.items() if owner == link}
+        if not any(obj.name in keep for obj in bpy.context.scene.objects):
+            raise ValueError(f"link {link} has no meshes, links with meshes: {', '.join(sorted(set(self._links.values()))) or 'none, run split_links first'}")
+        aside = [(obj, list(obj.users_collection)) for obj in bpy.context.scene.objects if obj.name not in keep]
+        for obj, collections in aside:
+            for collection in collections:
+                collection.objects.unlink(obj)
+        bpy.context.view_layer.update()
+        try:
+            self.save(path)
+        finally:
+            for obj, collections in aside:
+                for collection in collections:
+                    collection.objects.link(obj)
+            bpy.context.view_layer.update()
 
     def bind_uv_maps(self) -> None:
         """Bind each material's image textures to the UV layer holding its UVs."""
@@ -691,14 +824,27 @@ ModelConverter.register(ModelFormat.USD, ModelFormat.USDA, ModelFormat.USDC, Mod
 )
 
 
+_PACKED_SUFFIX = {"JPEG": ".jpg", "PNG": ".png", "OPEN_EXR": ".exr", "TARGA": ".tga", "BMP": ".bmp", "WEBP": ".webp"}
+
+
 def obj_export(filepath: str):
+    """Export an OBJ folder, the packed images without a file (as a glTF brings them) written into it so the MTL can name them."""
     base_path = Path(filepath)
     base_path.mkdir(parents=True, exist_ok=True)
-    bpy.ops.wm.obj_export(
-        filepath=str(base_path / f"{base_path.stem}.obj"),
-        export_materials=True,
-        path_mode="COPY",
-    )
+    pathless = [image for image in bpy.data.images if image.packed_file is not None and not image.filepath]
+    for n, image in enumerate(pathless):
+        target = base_path / f"{base_path.stem}_texture_{n}{_PACKED_SUFFIX.get(image.file_format, '.png')}"
+        target.write_bytes(image.packed_file.data)
+        image.filepath = str(target)
+    try:
+        bpy.ops.wm.obj_export(
+            filepath=str(base_path / f"{base_path.stem}.obj"),
+            export_materials=True,
+            path_mode="COPY",
+        )
+    finally:
+        for image in pathless:
+            image.filepath = ""
 
 
 ModelConverter.register(ModelFormat.OBJ)(_ModelConverterExt.inline(CoordinateSystem.default(), bpy.ops.wm.obj_import, obj_export))
@@ -762,7 +908,7 @@ def _sdf_material(material: bpy.types.Material) -> str:
 def sdf_export(filepath: str):
     base_path = Path(filepath)
     stem = base_path.stem
-    glow = _glow_objects(bpy.context.scene.get(GLOW_MATERIALS, ()))
+    glow = {name: objects for name, objects in _glow_objects(bpy.context.scene.get(GLOW_MATERIALS, ())).items() if objects}
     plain = True
     visuals = []
     if glow:

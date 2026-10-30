@@ -5,9 +5,16 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import PurePosixPath
 
 from arena_assets.impl import ANNOTATION_NAME
 from arena_assets.utils.logging import format_file_size, get_logger, get_manager
+
+
+def outermost(assets: typing.Iterable[str]) -> list[str]:
+    """Asset directories that lie inside no other listed asset directory."""
+    listed = set(assets)
+    return [asset for asset in dict.fromkeys(assets) if not any(parent.as_posix() in listed for parent in PurePosixPath(asset).parents)]
 
 
 class Bucket:
@@ -83,7 +90,7 @@ class Bucket:
             assets.extend(os.path.dirname(item["name"]) for item in data.get("items", []))
             next_token = data.get("nextPageToken")
             url = self._object_url("", **params, pageToken=next_token) if next_token else None
-        return assets
+        return outermost(assets)
 
     def listchildren(self, prefix: str) -> list[str]:
         """Immediate child prefixes under *prefix*, one API call per page.

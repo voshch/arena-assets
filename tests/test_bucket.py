@@ -1,4 +1,4 @@
-from arena_assets.impl.fetch import Bucket
+from arena_assets.impl.fetch import Bucket, outermost
 
 API = "https://storage.googleapis.com/storage/v1/b/bkt/o"
 
@@ -27,3 +27,8 @@ def test_request_carries_token():
 def test_request_anonymous_without_token():
     req = Bucket("bkt")._request(API)
     assert not req.has_header("Authorization")
+
+
+def test_outermost_drops_link_bundles_of_articulated_objects():
+    listed = ["Common/Object/Fridge", "Common/Object/Fridge/links/door", "Common/Object/Fridge/links/base", "Common/Object/Chair", "Common/Object/Fridge_B"]
+    assert outermost(listed) == ["Common/Object/Fridge", "Common/Object/Chair", "Common/Object/Fridge_B"]

@@ -33,6 +33,15 @@ class SourceLight:
     location: Vector3
     rotation: Quaternion = (1.0, 0.0, 0.0, 0.0)
     """Unit quaternion (w, x, y, z) of the light, which emits along its local -z axis."""
+    radiance: float | None = None
+    """Emitted luminance of a UsdLux light in its stage's units, None without UsdLux photometry."""
+    area: float = 0.0
+    """World-space emitting area in m^2."""
+    face_area: float = 0.0
+    """World-space emitting area seen along the emission axis in m^2."""
+    cct_K: float | None = None
+    link: str = ""
+    """Articulation link the light sits on, empty for an object without articulation."""
 
 
 @attrs.frozen(kw_only=True)

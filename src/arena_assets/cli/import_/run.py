@@ -98,12 +98,15 @@ def import_command(
     importer = importer_class(cache=cache if cache is not None else _default_cache(source))
 
     if not items and not all_:
-        if as_json:
+        try:
             listed = importer.cached_items()
+        except ITEM_ERRORS as error:
+            raise _fail(f"{kind} {source}: {reason(error)}") from error
+        if as_json:
             print(json.dumps({"kind": kind, "source": source, "target": _target_hint(importer_class), "count": len(listed), "items": listed}))
             return
         count = 0
-        for item in importer.cached_items():
+        for item in listed:
             print(item)
             count += 1
         safe_echo(f"{count} {kind} item(s) in {source}, import one with: import {kind} {source} ITEM [--out DIR], default target: {_target_hint(importer_class)}", ctx)

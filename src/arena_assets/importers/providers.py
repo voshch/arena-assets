@@ -69,6 +69,11 @@ class Provider(abc.ABC):
 
         return self._retry(url, call)
 
+    def open(self, relpath: str) -> http.client.HTTPResponse:
+        """Streamed body of *relpath*, for the caller to read and close."""
+        url = self.url(relpath)
+        return self._retry(url, lambda: self._open(self._request(url)))
+
     def size(self, relpath: str) -> int:
         url = self.url(relpath)
 

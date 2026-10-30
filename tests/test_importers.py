@@ -37,6 +37,7 @@ from arena_assets.importers.providers import Http
 
 def test_registry_lists_importers_by_kind_then_source():
     assert [(meta.kind, meta.name) for meta in IMPORTERS] == [
+        ("animation", "smplx"),
         ("episode", "musohu"),
         ("material", "ambientcg"),
         ("material", "polyhaven"),
@@ -65,7 +66,7 @@ def test_registry_lists_importers_by_kind_then_source():
 
 
 def test_kinds_and_the_sources_of_a_kind():
-    assert IMPORTERS.kinds() == ["episode", "material", "object", "scenario", "sound", "suite", "world"]
+    assert IMPORTERS.kinds() == ["animation", "episode", "material", "object", "scenario", "sound", "suite", "world"]
     assert IMPORTERS.names("world") == ["barn", "houseexpo", "procthor"]
     assert IMPORTERS.kinds_of("barn") == ["suite", "world"]
     assert IMPORTERS.kinds_of("socnavbench") == ["scenario", "suite"]
@@ -93,7 +94,7 @@ def test_meta_error_lists_the_sources_of_the_kind():
 
 
 def test_unknown_kind_lists_the_kinds():
-    with pytest.raises(KeyError, match="no importer kind 'nope', kinds: episode, material, object, scenario, sound, suite, world"):
+    with pytest.raises(KeyError, match="no importer kind 'nope', kinds: animation, episode, material, object, scenario, sound, suite, world"):
         IMPORTERS.meta("nope", "gso")
 
 

@@ -11,6 +11,8 @@ import numpy as np
 PELVIS_JOINT = "Hips"  # cmu_mb rig, the skeleton's root joint
 THIGH_JOINTS = ("LeftUpLeg", "RightUpLeg")  # cmu_mb rig, the hip joints the thighs hang from
 LEG_CHAINS = (("LeftUpLeg", "LeftLeg", "LeftFoot"), ("RightUpLeg", "RightLeg", "RightFoot"))  # cmu_mb rig, hip, knee, ankle
+ARM_CHAINS = (("LeftArm", "LeftForeArm", "LeftHand"), ("RightArm", "RightForeArm", "RightHand"))  # cmu_mb rig, shoulder, elbow, wrist
+HEAD_JOINT = "Head"  # cmu_mb rig, the base of the skull
 SEATED_FLEXIONS = tuple(float(np.radians(degrees)) for degrees in range(0, 141, 10))  # rad, hip flexions the seated clearance is measured at
 BUTTOCK_BAND = 0.12  # m below the hip joints
 BUTTOCK_REACH = 0.3  # m behind the hip joints
@@ -41,6 +43,20 @@ class Legs:
     thigh: float = attrs.field(converter=float)
     shin: float = attrs.field(converter=float)
     ankle: float = attrs.field(converter=float)
+
+
+@attrs.define(frozen=True)
+class Proportions:
+    """Trunk and arm geometry of a standing body in m: shoulder joints above the pelvis joint, half the shoulder and hip
+    joint spans, upper arm, forearm, wrist to fingertips, shoulder joints to the base of the skull."""
+
+    shoulders: float = attrs.field(converter=float)
+    shoulder_width: float = attrs.field(converter=float)
+    hip_width: float = attrs.field(converter=float)
+    upperarm: float = attrs.field(converter=float)
+    forearm: float = attrs.field(converter=float)
+    hand: float = attrs.field(converter=float)
+    head: float = attrs.field(converter=float)
 
 
 @attrs.define(frozen=True)
@@ -106,6 +122,30 @@ def legs(skin: Skin) -> Legs:
         thigh=round(float(np.linalg.norm(hip - knee)), 3),
         shin=round(float(np.linalg.norm(knee - ankle)), 3),
         ankle=round(float(ankle[2]) - floor, 3),
+    )
+
+
+def proportions(skin: Skin) -> Proportions:
+    """Trunk and arm geometry of a body in its bind pose, both sides averaged; the hand reaches its farthest vertex."""
+    joints = skin.joints
+    left, right = ([joints[name] for name in chain] for chain in ARM_CHAINS)
+    length = lambda i: float(np.mean([np.linalg.norm(arm[i] - arm[i + 1]) for arm in (left, right)]))  # noqa: E731
+    shoulder_z = float(np.mean([left[0][2], right[0][2]]))
+    dominant = np.asarray(skin.dominant, dtype=str)
+    hands = []
+    for side, chain in zip(("Left", "Right"), ARM_CHAINS, strict=True):
+        hand = skin.points[np.char.startswith(dominant, f"{side}Hand") | np.char.startswith(dominant, f"{side}Finger") | (dominant == f"{side[0]}Thumb")]
+        if len(hand) == 0:
+            raise ValueError(f"no vertex follows {chain[2]}")
+        hands.append(float(np.linalg.norm(hand - joints[chain[2]], axis=1).max()))
+    return Proportions(
+        shoulders=round(shoulder_z - float(joints[PELVIS_JOINT][2]), 3),
+        shoulder_width=round(float(np.linalg.norm(joints[ARM_CHAINS[0][0]] - joints[ARM_CHAINS[1][0]])) / 2, 3),
+        hip_width=round(float(np.linalg.norm(joints[THIGH_JOINTS[0]] - joints[THIGH_JOINTS[1]])) / 2, 3),
+        upperarm=round(length(0), 3),
+        forearm=round(length(1), 3),
+        hand=round(float(np.mean(hands)), 3),
+        head=round(float(joints[HEAD_JOINT][2]) - shoulder_z, 3),
     )
 
 

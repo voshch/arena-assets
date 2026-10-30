@@ -4,7 +4,7 @@ import pytest
 
 from arena_assets.impl import Face
 from arena_assets.impl.build.HumanDatabaseBuilder import HumanAnnotation, measure_body
-from arena_assets.utils.human import Legs, PelvisClearance, Skin, legs, pelvis_clearance, read_skin, seated_clearance
+from arena_assets.utils.human import Legs, PelvisClearance, Skin, legs, pelvis_clearance, proportions, read_skin, seated_clearance
 
 
 def rigid(dominant: list[str]) -> dict[str, np.ndarray]:
@@ -129,3 +129,27 @@ def test_build_leaves_an_unmeasurable_body_unannotated(tmp_path):
     for annotation in (HumanAnnotation(name="Nurse01", path="Human/Nurse01", face=Face.POS_X), HumanAnnotation(name="Odd", path="Human/Odd", face=Face.XY)):
         measure_body(annotation, tmp_path / "missing.dae")
         assert annotation.pelvis_clearance is None and annotation.legs is None
+
+
+def arms_skin() -> Skin:
+    """T-posed arms: shoulders 0.5 m above the pelvis and 0.2 m out, upper arm 0.3 m, forearm 0.25 m, the hand reaching 0.2 m."""
+    joints = {"Hips": np.array([0.0, 0.0, 1.0]), "LeftUpLeg": np.array([0.0, 0.1, 0.95]), "RightUpLeg": np.array([0.0, -0.1, 0.95]), "Head": np.array([0.0, 0.0, 1.72])}
+    points, dominant = [], []
+    for side, sign in (("Left", 1.0), ("Right", -1.0)):
+        for name, y in (("Arm", 0.2), ("ForeArm", 0.5), ("Hand", 0.75)):
+            joints[f"{side}{name}"] = np.array([0.0, sign * y, 1.5])
+        points += [(0.0, sign * 0.85, 1.5), (0.0, sign * 0.95, 1.5)]
+        dominant += [f"{side}Hand", f"{side}HandFinger1"]
+    return Skin(joints=joints, points=np.array(points), dominant=dominant)
+
+
+def test_proportions_measure_each_arm_and_the_trunk_in_the_bind_pose():
+    p = proportions(arms_skin())
+    assert (p.shoulders, p.shoulder_width, p.hip_width, p.head) == pytest.approx((0.5, 0.2, 0.1, 0.22))
+    assert (p.upperarm, p.forearm, p.hand) == pytest.approx((0.3, 0.25, 0.2))
+
+
+def test_proportions_need_hand_vertices():
+    skin = arms_skin()
+    with pytest.raises(ValueError, match="LeftHand"):
+        proportions(Skin(joints=skin.joints, points=skin.points[2:], dominant=skin.dominant[2:]))

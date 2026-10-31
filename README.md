@@ -37,7 +37,7 @@ arena-assets net default fetch -o ./models Common/Material/ABS_Hard_Leather
 arena-assets net default fetch -o ./models --format usdz --no-annotation
 ```
 
-`default` resolves to the public GCS bucket; any other bucket name can be passed instead.
+`default` resolves to the public GCS bucket; any other bucket name can be passed instead. `ARENA_ASSETS_ENDPOINT` replaces the GCS endpoint for every bucket call. `arena test` and CI point it at a dead loopback port, so test suites never reach a bucket.
 
 ### Build a database
 

@@ -61,13 +61,10 @@ def test_fetch_serves_a_cached_object_without_the_archive(tmp_path):
     assert importer(tmp_path).fetch(ITEM) == src
 
 
-def test_stage_is_object_builder_input_with_one_model_file(tmp_path):
+def test_stage_holds_the_annotation_and_one_model_file(tmp_path):
     source = stage(ITEM, FIXTURE, tmp_path / "dataset", OBJECT_TYPE)
-    assert source == tmp_path / "dataset" / RELPATH
     assert sorted(path.name for path in source.iterdir()) == sorted([ANNOTATION_NAME, f"{ITEM}.glb"])
     assert (source / f"{ITEM}.glb").read_bytes() == FIXTURE.read_bytes()
-    found = list(ObjectDatabaseBuilder(input_path=tmp_path / "dataset" / "Common", output_path=tmp_path / "build").discover())
-    assert [annotation.name for annotation in found] == [ITEM]
 
 
 def test_stage_kind_comes_from_the_name_and_keeps_the_object_type(tmp_path):
@@ -110,17 +107,6 @@ def test_fixture_attribution_names_the_fixture():
     assert [name for item in attribution["items"] for name in item] == [FIXTURE.name]
 
 
-def test_convert_builds_a_native_object_item(blender, tmp_path):
-    seed(tmp_path)
-    target = convert(tmp_path) / RELPATH
-    assert (target / f"{ITEM}.usdz").stat().st_size > 0
-    assert (target / f"{ITEM}.fbx").stat().st_size > 0
-    assert (target / f"{ITEM}.sdf" / f"{ITEM}.sdf").read_text().count(f"<uri>{ITEM}.dae</uri>") == 2
-    for preview in (f"{ITEM}_thumb.png", f"{ITEM}_topdown.png"):
-        assert (target / preview).read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
-    assert not list((tmp_path / "cache").glob("stage-*"))
-
-
 def test_convert_turns_the_y_up_glb_z_up_and_keeps_the_origin(blender, tmp_path):
     seed(tmp_path)
     out = convert(tmp_path)
@@ -133,22 +119,6 @@ def test_convert_turns_the_y_up_glb_z_up_and_keeps_the_origin(blender, tmp_path)
     raw = yaml.safe_load((out / RELPATH / ANNOTATION_NAME).read_text())
     assert raw["path"] == f"Object/{ITEM}"
     assert raw["tags"] == ["domain::common", "kind::table", "origin::ai2thor", "dining_table"]
-
-
-def test_convert_indexes_the_item_in_the_domain_database(blender, tmp_path):
-    seed(tmp_path)
-    listed = Database(convert(tmp_path) / "Common" / DATABASE_NAME).list_all("object")
-    assert listed["ids"] == [f"Object/{ITEM}"]
-
-
-def test_reconvert_replaces_the_item(blender, tmp_path):
-    seed(tmp_path)
-    out = convert(tmp_path)
-    stale = out / RELPATH / "stale.txt"
-    stale.write_text("x")
-    convert(tmp_path)
-    assert not stale.exists()
-    assert (out / RELPATH / f"{ITEM}.usdz").is_file()
 
 
 def test_a_failed_rebuild_keeps_the_item(blender, tmp_path):

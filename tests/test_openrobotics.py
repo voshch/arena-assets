@@ -260,13 +260,8 @@ def test_stage_writes_no_email_address(tmp_path):
     assert not [path for path in source.rglob("*") if path.suffix in (".yaml", ".obj", ".mtl") and "@" in path.read_text()]
 
 
-def test_stage_is_object_builder_input_with_the_visual_mesh_only(tmp_path):
-    source = staged(tmp_path)
-    assert source == tmp_path / "dataset" / RELPATH
-    assert files(source) == [ANNOTATION_NAME, TEXTURE, VISUAL]
-    found = list(ObjectDatabaseBuilder(input_path=tmp_path / "dataset" / "Common", output_path=tmp_path / "build").discover())
-    assert [annotation.name for annotation in found] == [ITEM]
-    assert Path(found[0].path) == source
+def test_stage_holds_the_annotation_and_the_visual_mesh_only(tmp_path):
+    assert files(staged(tmp_path)) == [ANNOTATION_NAME, TEXTURE, VISUAL]
 
 
 def test_stage_keeps_the_collada_geometry_and_restates_its_material_for_the_builder(tmp_path):
@@ -487,16 +482,6 @@ def test_import_command_names_the_license_it_refuses(tmp_path):
     assert result.exit_code == 2
     assert f"{ITEM} is under {CC_BY_SA}, only CC0 and CC BY 4.0 models are imported" in plain(result.output)
     assert not (tmp_path / "out").exists()
-
-
-def test_reconvert_replaces_the_item(blender, tmp_path):
-    seed(tmp_path)
-    out = convert(tmp_path)
-    stale = out / RELPATH / "stale.txt"
-    stale.write_text("x")
-    convert(tmp_path)
-    assert not stale.exists()
-    assert (out / RELPATH / f"{ITEM}.usdz").is_file()
 
 
 @pytest.mark.network

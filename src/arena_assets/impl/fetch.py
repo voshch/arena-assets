@@ -18,14 +18,15 @@ def outermost(assets: typing.Iterable[str]) -> list[str]:
 
 
 class Bucket:
-    _API = "https://storage.googleapis.com/storage/v1/b/{bucket}/o"
-    _DOWNLOAD = "https://storage.googleapis.com/download/storage/v1/b/{bucket}/o/{obj}?alt=media"
-    _UPLOAD = "https://storage.googleapis.com/upload/storage/v1/b/{bucket}/o"
+    _API = "{endpoint}/storage/v1/b/{bucket}/o"
+    _DOWNLOAD = "{endpoint}/download/storage/v1/b/{bucket}/o/{obj}?alt=media"
+    _UPLOAD = "{endpoint}/upload/storage/v1/b/{bucket}/o"
 
     def __init__(self, bucket: str, token: str | None = None):
         self.name = bucket
         self.token = token
-        self._api = self._API.format(bucket=bucket)
+        self._endpoint = os.environ.get("ARENA_ASSETS_ENDPOINT") or "https://storage.googleapis.com"
+        self._api = self._API.format(endpoint=self._endpoint, bucket=bucket)
 
     def _object_url(self, obj: str, **params: str) -> str:
         encoded = urllib.parse.quote(obj, safe="")
@@ -36,7 +37,7 @@ class Bucket:
 
     def _upload_url(self, obj: str) -> str:
         query = urllib.parse.urlencode({"uploadType": "media", "name": obj})
-        return f"{self._UPLOAD.format(bucket=self.name)}?{query}"
+        return f"{self._UPLOAD.format(endpoint=self._endpoint, bucket=self.name)}?{query}"
 
     def _request(self, url: str, **kwargs: typing.Any) -> urllib.request.Request:
         req = urllib.request.Request(url, **kwargs)
@@ -153,7 +154,7 @@ class Bucket:
 
     def download(self, blob_name: str, local_path: str) -> int:
         """Stream a single blob to a local file. Returns bytes downloaded."""
-        url = self._DOWNLOAD.format(bucket=self.name, obj=urllib.parse.quote(blob_name, safe=""))
+        url = self._DOWNLOAD.format(endpoint=self._endpoint, bucket=self.name, obj=urllib.parse.quote(blob_name, safe=""))
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
         size = 0
         with urllib.request.urlopen(self._request(url)) as resp, open(local_path, "wb") as f:

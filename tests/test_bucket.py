@@ -1,6 +1,20 @@
+import pytest
+
 from arena_assets.impl.fetch import Bucket, outermost
 
 API = "https://storage.googleapis.com/storage/v1/b/bkt/o"
+
+
+@pytest.fixture(autouse=True)
+def _default_endpoint(monkeypatch):
+    monkeypatch.delenv("ARENA_ASSETS_ENDPOINT", raising=False)
+
+
+def test_endpoint_override_reaches_every_url(monkeypatch):
+    monkeypatch.setenv("ARENA_ASSETS_ENDPOINT", "http://127.0.0.1:9")
+    bucket = Bucket("bkt")
+    assert bucket._object_url("") == "http://127.0.0.1:9/storage/v1/b/bkt/o"
+    assert bucket._upload_url("a").startswith("http://127.0.0.1:9/upload/")
 
 
 def test_object_url_bare():

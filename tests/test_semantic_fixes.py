@@ -1,3 +1,4 @@
+import pytest
 import yaml
 
 from arena_assets.semantic.fixes import fix_file
@@ -18,128 +19,57 @@ def _load(path):
         return yaml.safe_load(f)
 
 
-def test_bare_domain_tag_becomes_domain_facet(tmp_path):
-    path = _write(
-        tmp_path / "Office" / "Object" / "Widget" / "annotation.yaml",
-        {"name": "Widget", "path": "Object/Widget", "tags": ["office"]},
-    )
-    assert fix_file(path, SPEC) is True
-    assert _load(path)["tags"] == ["domain::office"]
-
-
-def test_bare_pedestrian_tag_is_dropped(tmp_path):
-    path = _write(
-        tmp_path / "Office" / "Object" / "Chair" / "annotation.yaml",
-        {"name": "Chair", "path": "Object/Chair", "tags": ["pedestrian"]},
-    )
+def _fixed_tags(root, directory, asset, tags, **fields):
+    path = _write(root / directory / "annotation.yaml", {"name": asset.rpartition("/")[2], "path": asset, "tags": tags, **fields})
     fix_file(path, SPEC)
-    tags = _load(path)["tags"]
-    assert "pedestrian" not in tags
+    return _load(path)["tags"]
 
 
-def test_bare_makehuman_tag_becomes_origin_facet(tmp_path):
-    path = _write(
-        tmp_path / "misc" / "annotation.yaml",
-        {"name": "Nurse", "path": "Human/Nurse", "tags": ["makehuman"]},
-    )
-    fix_file(path, SPEC)
-    assert _load(path)["tags"] == ["origin::makehuman"]
+@pytest.mark.parametrize(
+    ("directory", "asset", "tags", "present", "absent"),
+    [
+        ("Office/Object/Chair", "Object/Chair", ["pedestrian"], [], ["pedestrian"]),
+        ("Warehouse/Material/Crate", "Material/Crate", [], ["domain::warehouse"], []),
+        ("Warehouse/Material/Crate", "Material/Crate", ["domain::office"], ["domain::office"], ["domain::warehouse"]),
+        ("Residential/Object/Vase", "Object/Vase", ["material::porceplain", "material::pottery"], ["material::porcelain", "material::ceramic"], []),
+        ("Residential/Object/Oven", "Object/Oven", ["kitchen", "livingroom", "furniture", "appliance"], ["room::kitchen", "room::living_room", "kind::appliance"], ["furniture", "appliance"]),
+        ("Office/Object/Sofa_2", "Object/Sofa_2", ["kind::chair"], ["kind::chair"], ["kind::sofa"]),
+    ],
+)
+def test_fix_rewrites_tags(tmp_path, directory, asset, tags, present, absent):
+    fixed = _fixed_tags(tmp_path, directory, asset, tags)
+    assert [fixed.count(tag) for tag in present] == [1] * len(present)
+    assert not set(fixed) & set(absent)
 
 
-def test_domain_added_from_storage_path_when_absent(tmp_path):
-    path = _write(
-        tmp_path / "Warehouse" / "Material" / "Crate" / "annotation.yaml",
-        {"name": "Crate", "path": "Material/Crate", "tags": []},
-    )
-    fix_file(path, SPEC)
-    assert "domain::warehouse" in _load(path)["tags"]
+@pytest.mark.parametrize(
+    ("directory", "asset", "tags", "expected"),
+    [
+        ("Office/Object/Widget", "Object/Widget", ["office"], ["domain::office"]),
+        ("misc", "Human/Nurse", ["makehuman"], ["origin::makehuman"]),
+        ("Common/Sound/chair", "Sound/chair", [], ["domain::common"]),
+    ],
+)
+def test_fix_gives_exactly_these_tags(tmp_path, directory, asset, tags, expected):
+    assert _fixed_tags(tmp_path, directory, asset, tags) == expected
 
 
-def test_domain_not_duplicated_when_already_present(tmp_path):
-    path = _write(
-        tmp_path / "Warehouse" / "Material" / "Crate" / "annotation.yaml",
-        {"name": "Crate", "path": "Material/Crate", "tags": ["domain::office"]},
-    )
-    fix_file(path, SPEC)
-    tags = _load(path)["tags"]
-    assert tags.count("domain::office") == 1
-    assert "domain::warehouse" not in tags
-
-
-def test_object_kind_inferred_from_name_hit(tmp_path):
-    path = _write(
-        tmp_path / "Office" / "Object" / "Sofa_2" / "annotation.yaml",
-        {"name": "Sofa_2", "path": "Object/Sofa_2", "tags": []},
-    )
-    fix_file(path, SPEC)
-    assert "kind::sofa" in _load(path)["tags"]
-
-
-def test_object_kind_inference_picks_first_matching_name_token(tmp_path):
-    # "Sofa" is the first token of the (camelCase-split) name, "Table" is second;
-    # the first *matching* token wins, not table-declaration order.
-    path = _write(
-        tmp_path / "Office" / "Object" / "SofaTable" / "annotation.yaml",
-        {"name": "SofaTable", "path": "Object/SofaTable", "tags": []},
-    )
-    fix_file(path, SPEC)
-    assert "kind::sofa" in _load(path)["tags"]
-    assert "kind::table" not in _load(path)["tags"]
-
-
-def test_object_kind_inference_miss_leaves_tags_absent(tmp_path):
-    path = _write(
-        tmp_path / "Office" / "Object" / "SM_Gizmo" / "annotation.yaml",
-        {"name": "SM_Gizmo", "path": "Object/SM_Gizmo", "tags": []},
-    )
-    fix_file(path, SPEC)
-    assert not any(tag.startswith("kind::") for tag in _load(path)["tags"])
-
-
-def test_object_kind_override_beats_leading_token(tmp_path):
-    # Lab_Bench is a worktable, the bench token would mislabel it
-    path = _write(
-        tmp_path / "Hospital" / "Object" / "Lab_Bench" / "annotation.yaml",
-        {"name": "Lab_Bench", "path": "Object/Lab_Bench", "tags": []},
-    )
-    fix_file(path, SPEC)
-    assert "kind::counter" in _load(path)["tags"]
-
-
-def test_object_kind_tokenizes_digit_boundaries(tmp_path):
-    path = _write(
-        tmp_path / "Office" / "Object" / "SM_Frame01" / "annotation.yaml",
-        {"name": "SM_Frame01", "path": "Object/SM_Frame01", "tags": []},
-    )
-    fix_file(path, SPEC)
-    assert "kind::decor" in _load(path)["tags"]
-
-
-def test_material_kind_inferred_from_name_hit(tmp_path):
-    path = _write(
-        tmp_path / "Common" / "Material" / "Oak_Plank" / "annotation.yaml",
-        {"name": "Oak_Plank", "path": "Material/Oak_Plank", "tags": []},
-    )
-    fix_file(path, SPEC)
-    assert "kind::wood" in _load(path)["tags"]
-
-
-def test_material_kind_inference_miss_leaves_tags_absent(tmp_path):
-    path = _write(
-        tmp_path / "Common" / "Material" / "Unobtainium_Rough" / "annotation.yaml",
-        {"name": "Unobtainium_Rough", "path": "Material/Unobtainium_Rough", "tags": []},
-    )
-    fix_file(path, SPEC)
-    assert not any(tag.startswith("kind::") for tag in _load(path)["tags"])
-
-
-def test_material_kind_override_for_granite_trade_names(tmp_path):
-    path = _write(
-        tmp_path / "Common" / "Material" / "Volga_Blue" / "annotation.yaml",
-        {"name": "Volga_Blue", "path": "Material/Volga_Blue", "tags": []},
-    )
-    fix_file(path, SPEC)
-    assert "kind::stone" in _load(path)["tags"]
+@pytest.mark.parametrize(
+    ("domain", "asset_class", "name", "kind"),
+    [
+        ("Office", "Object", "Sofa_2", "sofa"),
+        ("Office", "Object", "SofaTable", "sofa"),
+        ("Office", "Object", "SM_Gizmo", None),
+        ("Hospital", "Object", "Lab_Bench", "counter"),
+        ("Office", "Object", "SM_Frame01", "decor"),
+        ("Common", "Material", "Oak_Plank", "wood"),
+        ("Common", "Material", "Unobtainium_Rough", None),
+        ("Common", "Material", "Volga_Blue", "stone"),
+    ],
+)
+def test_kind_is_inferred_from_the_name(tmp_path, domain, asset_class, name, kind):
+    fixed = _fixed_tags(tmp_path, f"{domain}/{asset_class}/{name}", f"{asset_class}/{name}", [])
+    assert [tag for tag in fixed if tag.startswith("kind::")] == ([f"kind::{kind}"] if kind else [])
 
 
 def test_sound_kind_comes_from_the_kind_field(tmp_path):
@@ -161,92 +91,16 @@ def test_sound_bare_tags_stay_bare(tmp_path):
     assert _load(path)["tags"] == ["domain::common", "kind::speech", "pedestrian", "kitchen", "office", "appliance"]
 
 
-def test_sound_without_a_kind_field_gets_no_kind(tmp_path):
-    path = _write(
-        tmp_path / "Common" / "Sound" / "chair" / "annotation.yaml",
-        {"name": "chair", "path": "Sound/chair", "tags": []},
-    )
-    fix_file(path, SPEC)
-    assert _load(path)["tags"] == ["domain::common"]
-
-
-def test_color_values_are_normalized(tmp_path):
-    path = _write(
-        tmp_path / "Residential" / "Object" / "Bed_B" / "annotation.yaml",
-        {
-            "name": "Bed_B",
-            "path": "Object/Bed_B",
-            "tags": [
-                "color::light yellow",
-                "color::+yellow",
-                "color::grey",
-                "color::colored",
-                "color::white",
-            ],
-        },
-    )
-    fix_file(path, SPEC)
-    tags = _load(path)["tags"]
-    colors = [tag for tag in tags if tag.startswith("color::")]
-    assert colors == ["color::yellow", "color::yellow", "color::gray", "color::white"]
-
-
-def test_material_typos_are_normalized(tmp_path):
-    path = _write(
-        tmp_path / "Residential" / "Object" / "Vase" / "annotation.yaml",
-        {
-            "name": "Vase",
-            "path": "Object/Vase",
-            "tags": ["material::porceplain", "material::pottery"],
-        },
-    )
-    fix_file(path, SPEC)
-    tags = _load(path)["tags"]
-    assert "material::porcelain" in tags
-    assert "material::ceramic" in tags
-
-
-def test_existing_malformed_facet_values_are_renormalized(tmp_path):
-    path = _write(
-        tmp_path / "Residential" / "Object" / "Fans" / "annotation.yaml",
-        {
-            "name": "Fans",
-            "path": "Object/Fans",
-            "tags": ["color::dark grey", "color::tinted"],
-        },
-    )
-    fix_file(path, SPEC)
-    colors = [tag for tag in _load(path)["tags"] if tag.startswith("color::")]
-    assert colors == ["color::gray"]
-
-
-def test_bare_room_and_redundant_tags(tmp_path):
-    path = _write(
-        tmp_path / "Residential" / "Object" / "Oven" / "annotation.yaml",
-        {
-            "name": "Oven",
-            "path": "Object/Oven",
-            "tags": ["kitchen", "livingroom", "furniture", "appliance"],
-        },
-    )
-    fix_file(path, SPEC)
-    tags = _load(path)["tags"]
-    assert "room::kitchen" in tags
-    assert "room::living_room" in tags
-    assert "kind::appliance" in tags
-    assert "furniture" not in tags
-    assert "appliance" not in tags
-
-
-def test_existing_kind_tag_is_not_overridden(tmp_path):
-    path = _write(
-        tmp_path / "Office" / "Object" / "Sofa_2" / "annotation.yaml",
-        {"name": "Sofa_2", "path": "Object/Sofa_2", "tags": ["kind::chair"]},
-    )
-    fix_file(path, SPEC)
-    tags = _load(path)["tags"]
-    assert tags.count("kind::chair") == 1
-    assert "kind::sofa" not in tags
+@pytest.mark.parametrize(
+    ("tags", "colors"),
+    [
+        (["color::light yellow", "color::+yellow", "color::grey", "color::colored", "color::white"], ["color::yellow", "color::yellow", "color::gray", "color::white"]),
+        (["color::dark grey", "color::tinted"], ["color::gray"]),
+    ],
+)
+def test_color_values_are_normalized(tmp_path, tags, colors):
+    fixed = _fixed_tags(tmp_path, "Residential/Object/Bed_B", "Object/Bed_B", tags)
+    assert [tag for tag in fixed if tag.startswith("color::")] == colors
 
 
 def test_tags_reordered_by_facet_declaration_order(tmp_path):

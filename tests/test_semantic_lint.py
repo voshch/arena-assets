@@ -1,3 +1,4 @@
+import pytest
 import yaml
 
 from arena_assets.semantic.lint import lint_file, lint_tree
@@ -17,75 +18,24 @@ def _codes(findings):
     return [finding.code for finding in findings]
 
 
-def test_malformed_tag_is_an_error(tmp_path):
-    path = _write(
-        tmp_path / "Office" / "Object" / "Chair" / "annotation.yaml",
-        {"name": "Chair", "path": "Object/Chair", "tags": ["Domain::Office"]},
-    )
-    findings = lint_file(path, SPEC)
-    malformed = [f for f in findings if f.code == "malformed-tag"]
-    assert len(malformed) == 1
-    assert malformed[0].severity == "error"
-
-
-def test_unknown_facet_is_a_warning(tmp_path):
-    path = _write(
-        tmp_path / "Office" / "Object" / "Chair" / "annotation.yaml",
-        {"name": "Chair", "path": "Object/Chair", "tags": ["nonsense::value"]},
-    )
-    findings = lint_file(path, SPEC)
-    matches = [f for f in findings if f.code == "unknown-facet"]
+@pytest.mark.parametrize(
+    ("tags", "code", "severity", "message"),
+    [
+        (["Domain::Office"], "malformed-tag", "error", ""),
+        (["nonsense::value"], "unknown-facet", "warning", ""),
+        (["kind::chair", "kind::sofa"], "cardinality-violation", "warning", ""),
+        (["mount::orbit"], "closed-vocab-violation", "warning", ""),
+        (["human::gender::male"], "facet-not-applicable", "warning", ""),
+        (["kind::chairs"], "novel-value", "info", "chair"),
+        (["office"], "bare-tag", "info", ""),
+    ],
+)
+def test_lint_finds_one_issue_of_the_tag(tmp_path, tags, code, severity, message):
+    path = _write(tmp_path / "Office" / "Object" / "Chair" / "annotation.yaml", {"name": "Chair", "path": "Object/Chair", "tags": tags})
+    matches = [f for f in lint_file(path, SPEC) if f.code == code]
     assert len(matches) == 1
-    assert matches[0].severity == "warning"
-
-
-def test_cardinality_violation_is_a_warning(tmp_path):
-    path = _write(
-        tmp_path / "Office" / "Object" / "Chair" / "annotation.yaml",
-        {
-            "name": "Chair",
-            "path": "Object/Chair",
-            "tags": ["kind::chair", "kind::sofa"],
-        },
-    )
-    findings = lint_file(path, SPEC)
-    matches = [f for f in findings if f.code == "cardinality-violation"]
-    assert len(matches) == 1
-    assert matches[0].severity == "warning"
-
-
-def test_closed_vocab_violation_is_a_warning(tmp_path):
-    path = _write(
-        tmp_path / "Office" / "Object" / "Chair" / "annotation.yaml",
-        {"name": "Chair", "path": "Object/Chair", "tags": ["mount::orbit"]},
-    )
-    findings = lint_file(path, SPEC)
-    matches = [f for f in findings if f.code == "closed-vocab-violation"]
-    assert len(matches) == 1
-    assert matches[0].severity == "warning"
-
-
-def test_facet_not_applicable_is_a_warning(tmp_path):
-    path = _write(
-        tmp_path / "Office" / "Object" / "Chair" / "annotation.yaml",
-        {"name": "Chair", "path": "Object/Chair", "tags": ["human::gender::male"]},
-    )
-    findings = lint_file(path, SPEC)
-    matches = [f for f in findings if f.code == "facet-not-applicable"]
-    assert len(matches) == 1
-    assert matches[0].severity == "warning"
-
-
-def test_novel_value_on_open_facet_is_info_with_suggestion(tmp_path):
-    path = _write(
-        tmp_path / "Office" / "Object" / "Chair" / "annotation.yaml",
-        {"name": "Chair", "path": "Object/Chair", "tags": ["kind::chairs"]},
-    )
-    findings = lint_file(path, SPEC)
-    matches = [f for f in findings if f.code == "novel-value"]
-    assert len(matches) == 1
-    assert matches[0].severity == "info"
-    assert "chair" in matches[0].message
+    assert matches[0].severity == severity
+    assert message in matches[0].message
 
 
 def test_missing_recommended_facet_is_info(tmp_path):
@@ -126,17 +76,6 @@ def test_missing_asa_stamp_is_info(tmp_path):
     )
     findings2 = lint_file(path2, SPEC)
     assert "missing-asa-stamp" not in _codes(findings2)
-
-
-def test_bare_tag_is_info(tmp_path):
-    path = _write(
-        tmp_path / "Office" / "Object" / "Chair" / "annotation.yaml",
-        {"name": "Chair", "path": "Object/Chair", "tags": ["office"]},
-    )
-    findings = lint_file(path, SPEC)
-    bare = [f for f in findings if f.code == "bare-tag"]
-    assert len(bare) == 1
-    assert bare[0].severity == "info"
 
 
 def test_asset_class_inferred_from_path_field(tmp_path):

@@ -1,9 +1,11 @@
+import configparser
 import contextlib
 import gzip
 import hashlib
 import http.client
 import json
 import os
+import sqlite3
 import subprocess
 import threading
 import time
@@ -22,6 +24,7 @@ DEFAULT_SOURCE = "public/models"
 BUCKETS = ("public", "arena-internal")
 MAX_UPLOAD = 4 << 30
 TOKEN_HINT = "set ARENA_ASSETS_TOKEN or log in with 'gcloud auth login'"
+GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 
 class StoreError(RuntimeError):
@@ -62,20 +65,29 @@ def index_ttl() -> int:
     return int(os.environ.get("ARENA_MODELS_TTL", "86400"))
 
 
+def _gcloud_stored_token() -> str:
+    """Access token refreshed from the active gcloud account's credentials in `$CLOUDSDK_CONFIG`."""
+    config = Path(os.environ.get("CLOUDSDK_CONFIG") or Path.home() / ".config" / "gcloud")
+    parser = configparser.ConfigParser()
+    parser.read(config / "configurations" / f"config_{(config / 'active_config').read_text().strip()}")
+    with contextlib.closing(sqlite3.connect(f"{(config / 'credentials.db').as_uri()}?mode=ro", uri=True)) as db:
+        (value,) = db.execute("SELECT value FROM credentials WHERE account_id = ?", (parser["core"]["account"],)).fetchone()
+    credentials = json.loads(value)
+    body = urllib.parse.urlencode({"grant_type": "refresh_token", **{key: credentials[key] for key in ("client_id", "client_secret", "refresh_token")}}).encode()
+    with urllib.request.urlopen(credentials.get("token_uri") or GOOGLE_TOKEN_URI, body) as resp:
+        return json.load(resp)["access_token"]
+
+
 def resolve_token() -> str:
-    """Bearer token from `$ARENA_ASSETS_TOKEN`, else from gcloud."""
+    """Bearer token from `$ARENA_ASSETS_TOKEN`, else the gcloud CLI, else gcloud's stored credentials."""
     if token := os.environ.get("ARENA_ASSETS_TOKEN"):
         return token
+    with contextlib.suppress(OSError, subprocess.CalledProcessError):
+        return subprocess.run(["gcloud", "auth", "print-access-token"], capture_output=True, text=True, check=True).stdout.strip()
     try:
-        result = subprocess.run(
-            ["gcloud", "auth", "print-access-token"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except (OSError, subprocess.CalledProcessError) as e:
+        return _gcloud_stored_token()
+    except (OSError, ValueError, KeyError, TypeError, sqlite3.Error, configparser.Error) as e:
         raise StoreError(f"no asset store token: {TOKEN_HINT}") from e
-    return result.stdout.strip()
 
 
 def sha256_of(path: str) -> str:

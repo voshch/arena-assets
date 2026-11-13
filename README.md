@@ -158,7 +158,7 @@ Each import converts items of an upstream dataset (objects, materials, worlds, s
 
 ### Private buckets
 
-Reads are anonymous until the store refuses them with a 401 or 403, then they retry with a bearer token from the `ARENA_ASSETS_TOKEN` environment variable or `gcloud auth print-access-token`, in that order. The store accepts tokens of the gcloud CLI client only. `GET <ARENA_ASSETS_URL>/_api/whoami` with the token shows what it may read and write. The `public` bucket never needs a token.
+Reads are anonymous until the store refuses them with a 401 or 403, then they retry with a bearer token from the `ARENA_ASSETS_TOKEN` environment variable, `gcloud auth print-access-token`, or, without a working gcloud CLI, a token refreshed from the active account's login in the gcloud config directory (`$CLOUDSDK_CONFIG`, default `~/.config/gcloud`), in that order. The store accepts tokens of the gcloud CLI client only. `GET <ARENA_ASSETS_URL>/_api/whoami` with the token shows what it may read and write. The `public` bucket never needs a token.
 
 ### Upload a built database
 
@@ -166,7 +166,7 @@ Reads are anonymous until the store refuses them with a 401 or 403, then they re
 arena-assets net public/models author ./models -d Common
 ```
 
-Files whose sha256 the index already lists under the same name are skipped, everything else is sent with `PUT` and its `X-Content-SHA256`. The last stdout line is a JSON summary, `{"files", "sent", "skipped", "bytes"}`. Existing objects with other content are replaced, `--no-overwrite` makes the store refuse them instead. The store takes files up to 4 GiB and the upload checks every file before it sends the first. Uploading requires write access: a token is taken from `--token`, the `ARENA_ASSETS_TOKEN` environment variable, or `gcloud auth print-access-token`, in that order. A refusal prints the store's reason, which names the object's owner.
+Files whose sha256 the index already lists under the same name are skipped, everything else is sent with `PUT` and its `X-Content-SHA256`. The last stdout line is a JSON summary, `{"files", "sent", "skipped", "bytes"}`. Existing objects with other content are replaced, `--no-overwrite` makes the store refuse them instead. The store takes files up to 4 GiB and the upload checks every file before it sends the first. Uploading requires write access: a token is taken from `--token`, then as for reads. A refusal prints the store's reason, which names the object's owner.
 
 ### Delete objects
 

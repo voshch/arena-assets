@@ -127,6 +127,7 @@ def store(monkeypatch, tmp_path):
     monkeypatch.delenv("ARENA_ASSETS_TOKEN", raising=False)
     monkeypatch.delenv("ARENA_MODELS_TTL", raising=False)
     monkeypatch.setenv("PATH", str(tmp_path / "no-gcloud"))
+    monkeypatch.setenv("CLOUDSDK_CONFIG", str(tmp_path / "no-gcloud-config"))
     yield server
     server.shutdown()
     server.server_close()

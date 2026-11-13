@@ -1,6 +1,9 @@
 import hashlib
+import json
 import os
+import sqlite3
 import time
+import urllib.parse
 
 import pytest
 
@@ -124,6 +127,33 @@ def test_refused_read_without_a_token_names_the_way_to_get_one(private):
     with pytest.raises(StoreError, match="GET arena-internal/index.json: 401 bearer token required, set ARENA_ASSETS_TOKEN") as refused:
         Bucket("arena-internal").listdir("")
     assert refused.value.status == 401
+
+
+def _gcloud_login(config, active: str, credentials: dict[str, dict]) -> None:
+    (config / "configurations").mkdir(parents=True)
+    (config / "active_config").write_text("work")
+    (config / "configurations" / "config_work").write_text(f"[core]\naccount = {active}\n")
+    with sqlite3.connect(config / "credentials.db") as db:
+        db.execute("CREATE TABLE credentials (account_id TEXT PRIMARY KEY, value BLOB)")
+        db.executemany("INSERT INTO credentials VALUES (?, ?)", [(account, json.dumps(value)) for account, value in credentials.items()])
+    db.close()
+
+
+def test_refused_read_refreshes_a_token_from_the_stored_gcloud_login(private, host, monkeypatch, tmp_path):
+    host.pages["/token"] = json.dumps({"access_token": "good", "expires_in": 3599}).encode()
+    login = {"type": "authorized_user", "client_id": "cli", "client_secret": "s", "refresh_token": "r-me", "token_uri": f"{host.base}/token"}
+    _gcloud_login(tmp_path / "gcloud", "me@example.org", {"me@example.org": login, "other@example.org": {**login, "refresh_token": "r-other"}})
+    monkeypatch.setenv("CLOUDSDK_CONFIG", str(tmp_path / "gcloud"))
+    Bucket("arena-internal").listdir("")
+    assert private.seen("GET", "/arena-internal/index.json")[-1]["Authorization"] == "Bearer good"
+    assert urllib.parse.parse_qs(host.posted["/token"].decode()) == {"grant_type": ["refresh_token"], "client_id": ["cli"], "client_secret": ["s"], "refresh_token": ["r-me"]}
+
+
+def test_stored_gcloud_login_without_the_active_account_names_the_way_to_get_one(private, monkeypatch, tmp_path):
+    _gcloud_login(tmp_path / "gcloud", "me@example.org", {"other@example.org": {"client_id": "cli", "client_secret": "s", "refresh_token": "r"}})
+    monkeypatch.setenv("CLOUDSDK_CONFIG", str(tmp_path / "gcloud"))
+    with pytest.raises(StoreError, match="401 bearer token required, set ARENA_ASSETS_TOKEN or log in with 'gcloud auth login'"):
+        Bucket("arena-internal").listdir("")
 
 
 def test_invalid_token_raises_after_one_retry(private, monkeypatch):

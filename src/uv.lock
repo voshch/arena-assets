@@ -107,7 +107,7 @@ wheels = [
 
 [[package]]
 name = "arena-assets"
-version = "1.0.0"
+version = "1.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "attrs" },
